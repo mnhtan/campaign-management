@@ -24,6 +24,7 @@ Each campaign is organized into a **separate folder**.
 
 ## 📝 Example Folder Structure
 
+```
 campaign-management/
 │
 ├── campaign-1-example/
@@ -35,3 +36,4 @@ campaign-management/
 │ ├── raw_data/
 │ ├── code/
 │ └── README.md
+```
