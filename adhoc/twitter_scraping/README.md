@@ -8,7 +8,7 @@ Dự án này thực hiện việc crawl dữ liệu từ Twitter sử dụng Pu
 - `code/`: Chứa mã nguồn của dự án
 
 ## Link Google Sheet
-[Link tới Google Sheet](https://docs.google.com/spreadsheets/d/your_sheet_id)
+[Link tới Google Sheet](https://drive.google.com/drive/folders/1lTj5NRiKa85twenF8PvpqeBSLjV_TRHq)
 
 ## Hướng dẫn sử dụng
 1. Cài đặt dependencies:
