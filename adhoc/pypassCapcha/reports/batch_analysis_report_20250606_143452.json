@@ -1,0 +1,49 @@
+{
+  "analysis_timestamp": "2025-06-06T14:34:52.124470",
+  "summary": {
+    "total_batches": 4,
+    "total_articles": 2430,
+    "avg_articles_per_batch": 607.5,
+    "unique_keywords": 61,
+    "unique_domains": 1
+  },
+  "batch_details": [
+    {
+      "batch_id": "batch_20250606_111837",
+      "batch_time": "2025-06-06T11:18:37",
+      "total_articles": 610,
+      "unique_keywords": 61,
+      "unique_domains": 1,
+      "avg_articles_per_keyword": 10.0,
+      "file_path": "batches\\batch_20250606_111837.csv"
+    },
+    {
+      "batch_id": "batch_20250606_121038",
+      "batch_time": "2025-06-06T12:10:38",
+      "total_articles": 610,
+      "unique_keywords": 61,
+      "unique_domains": 1,
+      "avg_articles_per_keyword": 10.0,
+      "file_path": "batches\\batch_20250606_121038.csv"
+    },
+    {
+      "batch_id": "batch_20250606_133929",
+      "batch_time": "2025-06-06T13:39:29",
+      "total_articles": 600,
+      "unique_keywords": 60,
+      "unique_domains": 1,
+      "avg_articles_per_keyword": 10.0,
+      "file_path": "batches\\batch_20250606_133929.csv"
+    },
+    {
+      "batch_id": "batch_20250606_135643",
+      "batch_time": "2025-06-06T13:56:43",
+      "total_articles": 610,
+      "unique_keywords": 61,
+      "unique_domains": 1,
+      "avg_articles_per_keyword": 10.0,
+      "file_path": "batches\\batch_20250606_135643.csv"
+    }
+  ],
+  "performance_trend": "stable"
+}
