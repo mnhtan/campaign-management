@@ -182,8 +182,13 @@ class GoldSilverReportGenerator:
                 csv_pattern = "gold_silver_completely_real_data_*.csv"
                 csv_files = glob.glob(csv_pattern)
             
+            # Thử tìm trong thư mục cha
             if not csv_files:
-                print(f"❌ Không tìm thấy file CSV trong data/ hoặc code/")
+                csv_pattern = "../gold_silver_completely_real_data_*.csv"
+                csv_files = glob.glob(csv_pattern)
+            
+            if not csv_files:
+                print(f"❌ Không tìm thấy file CSV trong data/, code/ hoặc thư mục cha")
                 print("💡 Hãy chạy final_gold_silver_table_with_real_data.py trước để tạo dữ liệu")
                 return False
             
@@ -246,7 +251,7 @@ class GoldSilverReportGenerator:
         # Tính RSI cho bạc (Silver)
         df['Silver_RSI'] = self._calculate_rsi(df['Silver Price VN'], period=14)
         
-        # Tính Difference để tương thích với chart cũ (optional)
+        # Tính Difference 
         df['Difference'] = df['Gold Price VN'] - df['Silver Price VN']
         
         return df
@@ -263,7 +268,7 @@ class GoldSilverReportGenerator:
         return rsi
     
     def create_price_ratio_chart(self):
-        """Tạo biểu đồ tỷ lệ giá vàng/bạc Việt Nam như trong ảnh"""
+        """Tạo biểu đồ tỷ lệ giá vàng/bạc Việt Nam """
         if self.data is None or self.data.empty:
             return None
         
@@ -273,38 +278,38 @@ class GoldSilverReportGenerator:
         # Tạo figure lớn ngang bằng chữ với tỷ lệ cân đối
         fig, ax = plt.subplots(1, 1, figsize=(16, 9))
         
-        # Vẽ đường tỷ lệ giá vàng/bạc - màu xanh lá như trong ảnh
+        # Vẽ đường tỷ lệ giá vàng/bạc - màu xanh lá 
         ax.plot(self.data['Date'], self.data['Price_Ratio'], 
                 linewidth=3, color='#2E8B57', alpha=0.9, label='Tỷ lệ Giá Vàng/Bạc VN')
         
-        # Tính và vẽ đường trung bình ngang - màu đỏ đứt nét như trong ảnh
+        # Tính và vẽ đường trung bình ngang - màu đỏ đứt nét 
         average_ratio = self.data['Price_Ratio'].mean()
         ax.axhline(y=average_ratio, color='red', linestyle='--', linewidth=2.5, 
                    alpha=0.8, label=f'Trung bình: {average_ratio:.1f}')
         
-        # Thiết lập tiêu đề giống trong ảnh
+        # Thiết lập tiêu đề
         ax.set_title('Thời gian\nTỷ lệ Giá Vàng/Bạc Việt Nam', 
                      fontsize=24, fontweight='bold', pad=30, loc='center')
         ax.set_xlabel('Thời gian', fontsize=16, fontweight='bold')
         ax.set_ylabel('Tỷ lệ', fontsize=16)
         
-        # Format trục x giống trong ảnh (19/05, 23/05, etc.)
+        # Format trục x 
         ax.xaxis.set_major_formatter(mdates.DateFormatter('%d/%m'))
         ax.xaxis.set_major_locator(mdates.DayLocator(interval=5))
         ax.tick_params(axis='x', rotation=0, labelsize=14)  # Không xoay label x
         ax.tick_params(axis='y', labelsize=14)
         
-        # Thiết lập giới hạn y từ 8.0 đến 9.6 như trong ảnh  
+        # Thiết lập giới hạn 
         ax.set_ylim(8.0, 9.6)
         
         # Thiết lập grid nhẹ
         ax.grid(True, alpha=0.3, linestyle='-', linewidth=0.5)
         
-        # Legend ở góc trên bên phải như trong ảnh
+        # Legend 
         ax.legend(loc='upper right', fontsize=14, frameon=True, 
                  fancybox=True, shadow=True, framealpha=0.9)
         
-        # Điều chỉnh layout để giống với ảnh
+        # Điều chỉnh layout 
         plt.subplots_adjust(left=0.08, right=0.95, top=0.88, bottom=0.12)
         
         # Lưu chart
@@ -318,93 +323,123 @@ class GoldSilverReportGenerator:
         """Tạo các time series charts chi tiết"""
         if self.data is None or self.data.empty:
             return []
-        
+
         # Thiết lập font cho charts
         self._setup_matplotlib_font()
-        
+
         chart_files = []
+
+        # Chart 1a: Giá vàng và bạc VN
+        fig1, ax1 = plt.subplots(1, 1, figsize=(16, 8))
         
-        # Chart 1: Main Time Series - Giá vàng và bạc VN
-        # Kích thước lớn ngang bằng chữ với tỷ lệ cân đối
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(16, 10))
-        
-        # Subplot 1: Giá vàng và bạc VN
         ax1.plot(self.data['Date'], self.data['Gold Price VN'], 
                 label='Giá Vàng VN', linewidth=3, color='gold', alpha=0.8)
         ax1.plot(self.data['Date'], self.data['Gold_MA7'], 
                 label='MA7 Vàng', linewidth=2, color='orange', linestyle='--', alpha=0.7)
-        
+
         ax1_twin = ax1.twinx()
         ax1_twin.plot(self.data['Date'], self.data['Silver Price VN'], 
                      label='Giá Bạc VN', linewidth=3, color='silver', alpha=0.8)
         ax1_twin.plot(self.data['Date'], self.data['Silver_VN_MA7'], 
                      label='MA7 Bạc VN', linewidth=2, color='gray', linestyle='--', alpha=0.7)
-        
+
         ax1.set_title('Biểu đồ Time Series - Giá Vàng và Bạc Việt Nam', 
-                     fontsize=24, fontweight='bold', pad=30)
-        ax1.set_xlabel('Thời gian', fontsize=16, fontweight='bold')
-        ax1.set_ylabel('Giá Vàng (VND/lượng)', fontsize=16, color='darkgoldenrod')
-        ax1_twin.set_ylabel('Giá Bạc (VND/lượng)', fontsize=16, color='dimgray')
-        
+                     fontsize=20, fontweight='bold', pad=25)
+        ax1.set_xlabel('Thời gian', fontsize=14, fontweight='bold')
+        ax1.set_ylabel('Giá Vàng (VND/lượng)', fontsize=14, color='darkgoldenrod')
+        ax1_twin.set_ylabel('Giá Bạc (VND/lượng)', fontsize=14, color='dimgray')
+
         # Format axes
         ax1.xaxis.set_major_formatter(mdates.DateFormatter('%d/%m'))
         ax1.xaxis.set_major_locator(mdates.DayLocator(interval=5))
-        ax1.tick_params(axis='x', rotation=45, labelsize=14)
-        ax1.tick_params(axis='y', labelsize=14)
-        ax1_twin.tick_params(axis='y', labelsize=14)
-        
+        ax1.tick_params(axis='x', rotation=45, labelsize=12)
+        ax1.tick_params(axis='y', labelsize=12)
+        ax1_twin.tick_params(axis='y', labelsize=12)
+
         # Format y-axis
         ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x/1000000:.1f}M'))
         ax1_twin.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x/1000:.0f}K'))
-        
+
         ax1.grid(True, alpha=0.3)
-        ax1.legend(loc='upper left', fontsize=14)
-        ax1_twin.legend(loc='upper right', fontsize=14)
+        ax1.legend(loc='upper left', fontsize=12)
+        ax1_twin.legend(loc='upper right', fontsize=12)
+
+        plt.subplots_adjust(left=0.08, right=0.92, top=0.92, bottom=0.15)
+
+        chart_file1a = os.path.join(self.charts_dir, 'gold_silver_vn.png')
+        plt.savefig(chart_file1a, dpi=300, pad_inches=0.1, facecolor='white')
+        plt.close()
+        chart_files.append(chart_file1a)
+
+        # Chart 1b: Giá bạc quốc tế và chênh lệch
+        fig2, ax2 = plt.subplots(1, 1, figsize=(16, 8))
         
-        # Subplot 2: Giá bạc quốc tế và chênh lệch
         ax2.plot(self.data['Date'], self.data['Silver Price International'], 
                 label='Giá Bạc Quốc Tế (USD/oz)', linewidth=3, color='blue', alpha=0.8)
         ax2.plot(self.data['Date'], self.data['Silver_Intl_MA7'], 
                 label='MA7 Bạc Quốc Tế', linewidth=2, color='navy', linestyle='--', alpha=0.7)
-        
+
         ax2_twin = ax2.twinx()
         ax2_twin.plot(self.data['Date'], self.data['Difference'], 
                      label='Chênh lệch Vàng-Bạc VN', linewidth=2.5, color='red', alpha=0.8)
-        
+
         ax2.set_title('Giá Bạc Quốc Tế và Chênh Lệch Giá Trong Nước', 
-                     fontsize=22, fontweight='bold', pad=25)
-        ax2.set_xlabel('Thời gian', fontsize=16, fontweight='bold')
-        ax2.set_ylabel('Giá Bạc Quốc Tế (USD/oz)', fontsize=16, color='blue')
-        ax2_twin.set_ylabel('Chênh lệch (VND)', fontsize=16, color='red')
-        
+                     fontsize=20, fontweight='bold', pad=25)
+        ax2.set_xlabel('Thời gian', fontsize=14, fontweight='bold')
+        ax2.set_ylabel('Giá Bạc Quốc Tế (USD/oz)', fontsize=14, color='blue')
+        ax2_twin.set_ylabel('Chênh lệch (VND)', fontsize=14, color='red')
+
         ax2.xaxis.set_major_formatter(mdates.DateFormatter('%d/%m'))
         ax2.xaxis.set_major_locator(mdates.DayLocator(interval=5))
-        ax2.tick_params(axis='x', rotation=45, labelsize=14)
-        ax2.tick_params(axis='y', labelsize=14)
-        ax2_twin.tick_params(axis='y', labelsize=14)
+        ax2.tick_params(axis='x', rotation=45, labelsize=12)
+        ax2.tick_params(axis='y', labelsize=12)
+        ax2_twin.tick_params(axis='y', labelsize=12)
         ax2_twin.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x/1000000:.1f}M'))
-        
-        ax2.grid(True, alpha=0.3)
-        ax2.legend(loc='upper left', fontsize=14)
-        ax2_twin.legend(loc='upper right', fontsize=14)
-        
-        # Spacing tối ưu cho layout 2 biểu đồ/trang
-        plt.subplots_adjust(hspace=0.5, left=0.08, right=0.92, top=0.92, bottom=0.12)
-        
-        chart_file1 = os.path.join(self.charts_dir, 'time_series_main.png')
-       
 
-        # Sử dụng pad_inches thay vì bbox_inches='tight' để giữ tỷ lệ ổn định
-        plt.savefig(chart_file1, dpi=300, pad_inches=0.1, facecolor='white')
+        ax2.grid(True, alpha=0.3)
+        ax2.legend(loc='upper left', fontsize=12)
+        ax2_twin.legend(loc='upper right', fontsize=12)
+
+        plt.subplots_adjust(left=0.08, right=0.92, top=0.92, bottom=0.15)
+
+        chart_file1b = os.path.join(self.charts_dir, 'silver_intl_difference.png')
+        plt.savefig(chart_file1b, dpi=300, pad_inches=0.1, facecolor='white')
         plt.close()
-        chart_files.append(chart_file1)
+        chart_files.append(chart_file1b)
+
+        # Chart 1c: Price Ratio Chart - Tỷ lệ giá vàng/bạc VN
+        fig3, ax3 = plt.subplots(1, 1, figsize=(16, 8))
         
-        # Chart 2: Price Ratio Chart - Biểu đồ tỷ lệ giá vàng/bạc như trong ảnh
-        price_ratio_chart = self.create_price_ratio_chart()
-        if price_ratio_chart:
-            chart_files.append(price_ratio_chart)
-        
-        # Chart 3: RSI Time Series Comparison
+        ax3.plot(self.data['Date'], self.data['Price_Ratio'], 
+                linewidth=3, color='#2E8B57', alpha=0.9, label='Tỷ lệ Giá Vàng/Bạc VN')
+
+        average_ratio = self.data['Price_Ratio'].mean()
+        ax3.axhline(y=average_ratio, color='red', linestyle='--', linewidth=2.5, 
+                   alpha=0.8, label=f'Trung bình: {average_ratio:.1f}')
+
+        ax3.set_title('Tỷ lệ Giá Vàng/Bạc Việt Nam', 
+                     fontsize=20, fontweight='bold', pad=25)
+        ax3.set_xlabel('Thời gian', fontsize=14, fontweight='bold')
+        ax3.set_ylabel('Tỷ lệ', fontsize=14)
+
+        ax3.xaxis.set_major_formatter(mdates.DateFormatter('%d/%m'))
+        ax3.xaxis.set_major_locator(mdates.DayLocator(interval=5))
+        ax3.tick_params(axis='x', rotation=45, labelsize=12)
+        ax3.tick_params(axis='y', labelsize=12)
+
+        ax3.set_ylim(8.0, 9.6)
+        ax3.grid(True, alpha=0.3, linestyle='-', linewidth=0.5)
+        ax3.legend(loc='upper right', fontsize=12, frameon=True, 
+                 fancybox=True, shadow=True, framealpha=0.9)
+
+        plt.subplots_adjust(left=0.08, right=0.92, top=0.92, bottom=0.15)
+
+        chart_file1c = os.path.join(self.charts_dir, 'price_ratio.png')
+        plt.savefig(chart_file1c, dpi=300, pad_inches=0.1, facecolor='white')
+        plt.close()
+        chart_files.append(chart_file1c)
+
+        # Chart 2: RSI Time Series Comparison
         # Kích thước lớn ngang bằng chữ với tỷ lệ cân đối
         fig, ax = plt.subplots(1, 1, figsize=(16, 9))
         
@@ -443,8 +478,6 @@ class GoldSilverReportGenerator:
         current_silver_rsi = self.data['Silver_RSI'].iloc[-1]
         rsi_diff = abs(current_gold_rsi - current_silver_rsi)
         
-        
-        
         # Margins tối ưu cho layout 2 biểu đồ/trang
         plt.subplots_adjust(left=0.08, right=0.95, top=0.92, bottom=0.15)
         
@@ -453,97 +486,83 @@ class GoldSilverReportGenerator:
         plt.close()
         chart_files.append(chart_file2)
         
-        # Chart 4: Phân Phối Giá Bạc VN (lớn ngang bằng chữ)
-        fig, ax = plt.subplots(1, 1, figsize=(16, 9))
+        # Chart 3 & 4: Phân Phối và Tương Quan - 2 subplot cạnh nhau
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 10))
         
-        # Histogram phân phối giá bạc VN
-        n, bins, patches = ax.hist(self.data['Silver Price VN'], bins=20, alpha=0.75, 
+        # Chart 3: Phân Phối Giá Bạc VN (bên trái)
+        n, bins, patches = ax1.hist(self.data['Silver Price VN'], bins=20, alpha=0.75, 
                                    color='silver', edgecolor='black', linewidth=1.2)
         
         # Đường trung bình và trung vị
         mean_val = self.data['Silver Price VN'].mean()
         median_val = self.data['Silver Price VN'].median()
         
-        ax.axvline(mean_val, color='red', linestyle='--', linewidth=2.5,
+        ax1.axvline(mean_val, color='red', linestyle='--', linewidth=2.5,
                    label=f'TB: {mean_val:,.0f}', alpha=0.9)
-        ax.axvline(median_val, color='orange', linestyle=':', linewidth=2.5,
+        ax1.axvline(median_val, color='orange', linestyle=':', linewidth=2.5,
                    label=f'Trung vị: {median_val:,.0f}', alpha=0.9)
         
-        # Styling
-        ax.set_title('Phân Phối Giá Bạc VN', fontsize=24, fontweight='bold', pad=30)
-        ax.set_xlabel('Giá (VND/lượng)', fontsize=18, fontweight='bold')
-        ax.set_ylabel('Tần suất', fontsize=18, fontweight='bold')
+        # Styling cho chart 3
+        ax1.set_title('Phân Phối Giá Bạc VN', fontsize=18, fontweight='bold', pad=20)
+        ax1.set_xlabel('Giá (VND/lượng)', fontsize=14, fontweight='bold')
+        ax1.set_ylabel('Tần suất', fontsize=14, fontweight='bold')
+        ax1.legend(fontsize=12, loc='upper left', frameon=True, fancybox=True, shadow=True)
+        ax1.grid(True, alpha=0.3, linestyle='-', linewidth=0.5)
+        ax1.tick_params(axis='x', labelsize=11)
+        ax1.tick_params(axis='y', labelsize=11)
         
-        # Legend với styling tốt hơn
-        ax.legend(fontsize=16, loc='upper left', frameon=True, fancybox=True, shadow=True)
-        ax.grid(True, alpha=0.3, linestyle='-', linewidth=0.5)
-        ax.tick_params(axis='x', labelsize=14)
-        ax.tick_params(axis='y', labelsize=14)
+        # Chart 4: Tương Quan Bạc VN vs Vàng VN (bên phải)
+        scatter = ax2.scatter(self.data['Silver Price VN'], self.data['Gold Price VN'], 
+                   alpha=0.65, color='blue', s=40, edgecolors='navy', linewidth=0.8)
         
-        # Text box thống kê với vị trí tối ưu
+        # Highlight điểm mới nhất
+        latest_silver = self.data['Silver Price VN'].iloc[-1]
+        latest_gold = self.data['Gold Price VN'].iloc[-1]
+        ax2.scatter(latest_silver, latest_gold, color='red', s=180, alpha=0.95, 
+                   edgecolors='darkred', linewidth=3, label='Ngày mới nhất', zorder=10,
+                   marker='o')
+        
+        # Đường trend
+        z = np.polyfit(self.data['Silver Price VN'], self.data['Gold Price VN'], 1)
+        p = np.poly1d(z)
+        ax2.plot(self.data['Silver Price VN'], p(self.data['Silver Price VN']), 
+                "r--", alpha=0.85, linewidth=2.5, label='Đường xu hướng')
+        
+        # Styling cho chart 4
+        corr = self.data['Silver Price VN'].corr(self.data['Gold Price VN'])
+        ax2.set_title(f'Tương Quan Bạc VN vs Vàng VN\n(r = {corr:.3f})', 
+                     fontsize=18, fontweight='bold', pad=20)
+        ax2.set_xlabel('Giá Bạc VN (VND/lượng)', fontsize=14, fontweight='bold')
+        ax2.set_ylabel('Giá Vàng VN (VND/lượng)', fontsize=14, fontweight='bold')
+        ax2.legend(fontsize=12, loc='upper left', frameon=True, fancybox=True, shadow=True)
+        ax2.grid(True, alpha=0.3, linestyle='-', linewidth=0.5)
+        ax2.tick_params(axis='x', labelsize=11)
+        ax2.tick_params(axis='y', labelsize=11)
+        
+        # Thêm thống kê tóm tắt
         min_val = self.data['Silver Price VN'].min()
         max_val = self.data['Silver Price VN'].max()
         std_val = self.data['Silver Price VN'].std()
         
-       
+        # Text box thống kê cho chart 3
+        stats_text = f'Min: {min_val:,.0f}\nMax: {max_val:,.0f}\nStd: {std_val:,.0f}'
+        ax1.text(0.02, 0.98, stats_text, transform=ax1.transAxes, fontsize=10,
+                verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
         
-        
-        # Điều chỉnh margins để tránh bị cắt text
-        plt.subplots_adjust(left=0.12, right=0.95, top=0.88, bottom=0.15)
-        
-        chart_file3 = os.path.join(self.charts_dir, 'silver_distribution.png')
-        plt.savefig(chart_file3, dpi=300, pad_inches=0.1, facecolor='white')
-        plt.close()
-        chart_files.append(chart_file3)
-        
-        # Chart 5: Tương Quan Bạc VN vs Vàng VN (lớn ngang bằng chữ)
-        fig, ax = plt.subplots(1, 1, figsize=(16, 9))
-        
-        # Scatter plot correlation với styling tốt hơn
-        scatter = ax.scatter(self.data['Silver Price VN'], self.data['Gold Price VN'], 
-                   alpha=0.65, color='blue', s=40, edgecolors='navy', linewidth=0.8)
-        
-        # Highlight điểm mới nhất nổi bật
-        latest_silver = self.data['Silver Price VN'].iloc[-1]
-        latest_gold = self.data['Gold Price VN'].iloc[-1]
-        ax.scatter(latest_silver, latest_gold, color='red', s=180, alpha=0.95, 
-                   edgecolors='darkred', linewidth=3, label='Ngày mới nhất', zorder=10,
-                   marker='o')
-        
-        # Đường trend với styling tốt hơn
-        z = np.polyfit(self.data['Silver Price VN'], self.data['Gold Price VN'], 1)
-        p = np.poly1d(z)
-        ax.plot(self.data['Silver Price VN'], p(self.data['Silver Price VN']), 
-                "r--", alpha=0.85, linewidth=2.5, label='Đường xu hướng')
-        
-        # Title và labels với kích thước phù hợp 16x9
-        corr = self.data['Silver Price VN'].corr(self.data['Gold Price VN'])
-        ax.set_title(f'Tương Quan Bạc VN vs Vàng VN\n(r = {corr:.3f})', 
-                     fontsize=24, fontweight='bold', pad=30)
-        ax.set_xlabel('Giá Bạc VN (VND/lượng)', fontsize=18, fontweight='bold')
-        ax.set_ylabel('Giá Vàng VN (VND/lượng)', fontsize=18, fontweight='bold')
-        
-        # Legend và grid tối ưu
-        ax.legend(fontsize=16, loc='upper left', frameon=True, fancybox=True, shadow=True)
-        ax.grid(True, alpha=0.3, linestyle='-', linewidth=0.5)
-        ax.tick_params(axis='x', labelsize=14)
-        ax.tick_params(axis='y', labelsize=14)
-        
-        # Text box thống kê với vị trí tối ưu cho layout 12x8
+        # Text box thống kê cho chart 4
         corr_strength = "Rất mạnh" if abs(corr) > 0.8 else "Mạnh" if abs(corr) > 0.6 else "Trung bình" if abs(corr) > 0.4 else "Yếu"
         corr_direction = "Thuận chiều" if corr > 0 else "Nghịch chiều"
+        corr_text = f'Mức độ: {corr_strength}\nHướng: {corr_direction}'
+        ax2.text(0.02, 0.98, corr_text, transform=ax2.transAxes, fontsize=10,
+                verticalalignment='top', bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8))
         
+        # Điều chỉnh spacing giữa 2 subplots
+        plt.subplots_adjust(left=0.08, right=0.95, top=0.90, bottom=0.12, wspace=0.25)
         
-        
-        
-        
-        # Margins tối ưu cho layout 12x8
-        plt.subplots_adjust(left=0.10, right=0.95, top=0.88, bottom=0.15)
-        
-        chart_file4 = os.path.join(self.charts_dir, 'correlation_analysis.png')
-        plt.savefig(chart_file4, dpi=300, pad_inches=0.1, facecolor='white')
+        chart_file_combined = os.path.join(self.charts_dir, 'distribution_correlation_combined.png')
+        plt.savefig(chart_file_combined, dpi=300, pad_inches=0.1, facecolor='white')
         plt.close()
-        chart_files.append(chart_file4)
+        chart_files.append(chart_file_combined)
 
         print(f"✅ Đã tạo {len(chart_files)} charts time series")
         return chart_files
@@ -898,35 +917,37 @@ class GoldSilverReportGenerator:
                               "đường moving average 7 ngày để làm mịn xu hướng và giảm nhiễu.", body_style))
         story.append(Spacer(1, 10))
         
-        # Trang 1: 2 biểu đồ đầu, Trang 2: 3 biểu đồ cuối
+        # Trang 1: 3 chart tách riêng (1a, 1b, 1c), Trang 2: RSI + Chart gộp (phân phối + tương quan)
         for i, chart_file in enumerate(chart_files):
             if os.path.exists(chart_file):
-                # PageBreak sau 2 charts đầu tiên
-                if i == 2:
+                # PageBreak sau 3 charts đầu tiên (3 chart tách riêng)
+                if i == 3:
                     story.append(PageBreak())
                 
                 # Space trước chart
-                if i == 0 or i == 2:  # Chart đầu tiên trong mỗi trang
-                    story.append(Spacer(1, 8))
+                if i == 0 or i == 3:  # Chart đầu tiên trong mỗi trang
+                    story.append(Spacer(1, 5))
                 else:  # Các charts khác
-                    story.append(Spacer(1, 6))
+                    story.append(Spacer(1, 3))
                 
                 # Kích thước điều chỉnh theo layout trang
-                if i < 2:  # 2 charts đầu - height lớn hơn vì chỉ có 2 charts/page
-                    img = Image(chart_file, width=17*cm, height=9*cm)
-                else:  # 3 charts cuối - height nhỏ hơn để vừa 3 charts
-                    img = Image(chart_file, width=17*cm, height=7.5*cm)
+                if i < 3:  # 3 charts đầu (1a, 1b, 1c) - cách đều trong 1 trang
+                    img = Image(chart_file, width=17*cm, height=6.5*cm)
+                elif i == 3:  # Chart 4: RSI (chữ nhật)
+                    img = Image(chart_file, width=17*cm, height=8*cm)
+                else:  # Chart 5: Phân phối + tương quan gộp (chữ nhật rộng)
+                    img = Image(chart_file, width=18*cm, height=9*cm)
                 story.append(img)
                 
                 # Space sau chart
-                if i == 0:  # Chart đầu tiên
-                    story.append(Spacer(1, 8))  # Space giữa 2 charts đầu
-                elif i == 1:  # Chart thứ 2
-                    story.append(Spacer(1, 3))  # Space cuối trang 1
-                elif i < 4:  # 2 charts đầu trong nhóm 3
-                    story.append(Spacer(1, 4))  # Space nhỏ giữa 3 charts
-                else:  # Chart cuối cùng
-                    story.append(Spacer(1, 3))
+                if i < 2:  # 2 charts đầu trong nhóm 3
+                    story.append(Spacer(1, 3))  # Space nhỏ giữa 3 charts
+                elif i == 2:  # Chart thứ 3 cuối trang 1
+                    story.append(Spacer(1, 2))  # Space cuối trang 1
+                elif i == 3:  # Chart RSI trang 2
+                    story.append(Spacer(1, 4))  # Space sau chart RSI
+                else:  # Chart gộp cuối cùng
+                    story.append(Spacer(1, 2))
         
         story.append(PageBreak())
         
@@ -937,7 +958,7 @@ class GoldSilverReportGenerator:
         
         recent_data = self.data.tail(90)  # 3 tháng = 90 ngày
         table_data = [['Ngày', 'Vàng VN\n(VND/lượng)', 'Bạc VN\n(VND/lượng)', 
-                      'Bạc Quốc tế\n(USD/oz)', 'Chênh lệch\n(VND)', 'Tỷ lệ\nVàng/Bạc']]
+                      'Bạc Quốc tế\n(USD/oz)', 'RSI\nVàng', 'Correlation\nValue', 'Tỷ lệ\nVàng/Bạc']]
         
         for _, row in recent_data.iterrows():
             table_data.append([
@@ -945,11 +966,12 @@ class GoldSilverReportGenerator:
                 f"{row['Gold Price VN']:,.0f}",
                 f"{row['Silver Price VN']:,.0f}",
                 f"${row['Silver Price International']:.2f}",
-                f"{row['Difference']:,.0f}",
+                f"{row.get('Gold_RSI', 0):.1f}" if pd.notna(row.get('Gold_RSI', 0)) else "N/A",
+                f"{row.get('Correlation Value', 0):.3f}" if pd.notna(row.get('Correlation Value', 0)) else "N/A",
                 f"{row['Price_Ratio']:.1f}"
             ])
         
-        data_table = Table(table_data, colWidths=[2.2*cm, 2.4*cm, 2.4*cm, 2.4*cm, 2.4*cm, 2*cm])
+        data_table = Table(table_data, colWidths=[2*cm, 2.2*cm, 2.2*cm, 2.2*cm, 1.8*cm, 2*cm, 1.8*cm])
         data_table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.navy),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
@@ -993,14 +1015,19 @@ class GoldSilverReportGenerator:
 def main():
     """Test function"""
     generator = GoldSilverReportGenerator()
-    pdf_file = generator.create_pdf_report()
-    
-    if pdf_file:
-        print(f"🎉 Báo cáo PDF chuyên nghiệp đã được tạo: {pdf_file}")
-        file_size = os.path.getsize(pdf_file) / 1024  # KB
-        print(f"📊 Kích thước file: {file_size:.1f} KB")
-    else:
-        print("❌ Không thể tạo báo cáo PDF")
+    try:
+        pdf_file = generator.create_pdf_report()
+        
+        if pdf_file:
+            print(f"🎉 Báo cáo PDF chuyên nghiệp đã được tạo: {pdf_file}")
+            file_size = os.path.getsize(pdf_file) / 1024  # KB
+            print(f"📊 Kích thước file: {file_size:.1f} KB")
+        else:
+            print("❌ Không thể tạo báo cáo PDF")
+    except Exception as e:
+        print(f"❌ Lỗi khi tạo báo cáo PDF: {e}")
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
     main() 
