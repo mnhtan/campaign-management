@@ -12,8 +12,18 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 import logging
 import csv
-from datetime import datetime
+from datetime import datetime, time as dt_time
 import os
+
+# Thêm Selenium imports
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from webdriver_manager.chrome import ChromeDriverManager
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -36,12 +46,13 @@ class CrawlStats:
     failed_requests: int = 0
 
 class GoogleNewsScraper:
-    def __init__(self, proxy_list: List[str] = None):
+    def __init__(self, proxy_list: List[str] = None, use_selenium: bool = False):
         """
         Initialize scraper with anti-CAPTCHA measures
         
         Args:
             proxy_list: List of proxy servers in format 'ip:port' or 'username:password@ip:port'
+            use_selenium: Whether to use Selenium for bypassing CAPTCHA
         """
         self.ua = UserAgent()
         self.proxy_list = proxy_list or []
@@ -49,12 +60,199 @@ class GoogleNewsScraper:
         self.session_pool = {}
         self.request_count = 0
         self.last_request_time = 0
+        self.use_selenium = use_selenium
+        self.driver = None
         
         # Rate limiting settings
         self.min_delay = 2  # Minimum delay between requests
         self.max_delay = 5  # Maximum delay between requests
         self.requests_per_session = 10  # Switch session after N requests
         
+        # Khởi tạo Selenium driver nếu cần
+        if self.use_selenium:
+            self._setup_selenium_driver()
+        
+    def _setup_selenium_driver(self):
+        """Thiết lập Selenium WebDriver với các options tối ưu"""
+        try:
+            chrome_options = Options()
+            
+            # Các options để tăng tốc và ẩn browser
+            chrome_options.add_argument('--headless')  # Chạy ẩn browser
+            chrome_options.add_argument('--no-sandbox')
+            chrome_options.add_argument('--disable-dev-shm-usage')
+            chrome_options.add_argument('--disable-gpu')
+            chrome_options.add_argument('--disable-blink-features=AutomationControlled')
+            chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+            chrome_options.add_experimental_option('useAutomationExtension', False)
+            
+            # User agent ngẫu nhiên
+            chrome_options.add_argument(f'--user-agent={self.ua.random}')
+            
+            # Proxy nếu có
+            if self.proxy_cycle:
+                proxy = next(self.proxy_cycle)
+                if '@' not in proxy:  # Simple proxy
+                    chrome_options.add_argument(f'--proxy-server=http://{proxy}')
+            
+            # Khởi tạo driver với auto-detection architecture
+            try:
+                # Thử download driver phù hợp với OS
+                service = Service(ChromeDriverManager().install())
+                self.driver = webdriver.Chrome(service=service, options=chrome_options)
+            except Exception as e1:
+                logger.warning(f"Lỗi ChromeDriverManager: {e1}")
+                # Fallback: thử dùng chromedriver trong PATH
+                try:
+                    self.driver = webdriver.Chrome(options=chrome_options)
+                except Exception as e2:
+                    logger.error(f"Lỗi Chrome trong PATH: {e2}")
+                    raise Exception("Không thể khởi tạo Chrome WebDriver")
+            
+            # Script để ẩn automation detection
+            self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            
+            logger.info("✅ Selenium WebDriver đã được khởi tạo thành công")
+            
+        except Exception as e:
+            logger.error(f"❌ Lỗi khởi tạo Selenium: {str(e)}")
+            logger.info("💡 Sẽ sử dụng RSS mode thay thế")
+            self.use_selenium = False
+    
+    def _get_real_urls_with_selenium(self, keyword: str, max_results: int = 20) -> List[NewsArticle]:
+        """
+        Sử dụng Selenium để lấy current URL thực tế từ Google News
+        
+        Args:
+            keyword: Từ khóa tìm kiếm
+            max_results: Số bài tối đa
+            
+        Returns:
+            List các NewsArticle với URL thực tế
+        """
+        articles = []
+        
+        if not self.driver:
+            logger.error("❌ Selenium driver chưa được khởi tạo")
+            return articles
+        
+        try:
+            # Build Google News search URL
+            search_url = f"https://news.google.com/search?q={quote(keyword)}&hl=en&gl=us"
+            
+            logger.info(f"🔍 Selenium đang tìm kiếm: {keyword}")
+            
+            # Mở trang tìm kiếm
+            self.driver.get(search_url)
+            
+            # Đợi trang load
+            WebDriverWait(self.driver, 10).until(
+                EC.presence_of_element_located((By.TAG_NAME, "article"))
+            )
+            
+            # Tìm tất cả các bài báo
+            article_elements = self.driver.find_elements(By.TAG_NAME, "article")
+            
+            logger.info(f"📰 Tìm thấy {len(article_elements)} bài báo trên trang")
+            
+            for i, article_elem in enumerate(article_elements[:max_results]):
+                try:
+                    # Tìm link trong article
+                    link_elem = article_elem.find_element(By.TAG_NAME, "a")
+                    
+                    if link_elem:
+                        # Click vào link để lấy current URL
+                        original_url = link_elem.get_attribute('href')
+                        
+                        # Mở tab mới
+                        self.driver.execute_script("window.open('');")
+                        self.driver.switch_to.window(self.driver.window_handles[1])
+                        
+                        # Navigate đến link
+                        self.driver.get(original_url)
+                        
+                        # Đợi một chút để redirect hoàn thành
+                        time.sleep(2)
+                        
+                        # Lấy current URL (đây là URL thực tế sau khi redirect)
+                        real_url = self.driver.current_url
+                        
+                        # Lấy title từ trang thực tế
+                        try:
+                            headline = self.driver.title
+                        except:
+                            headline = f"Article {i+1}"
+                        
+                        # Đóng tab hiện tại và quay về tab chính
+                        self.driver.close()
+                        self.driver.switch_to.window(self.driver.window_handles[0])
+                        
+                        # Tạo NewsArticle với URL thực tế
+                        article = NewsArticle(
+                            headline=headline,
+                            link=real_url,
+                            date="Recent",
+                            source=self._extract_domain_from_url(real_url)
+                        )
+                        articles.append(article)
+                        
+                        logger.info(f"✅ [{i+1}] {headline[:60]}...")
+                        logger.info(f"🔗 Real URL: {real_url}")
+                        
+                        # Delay ngắn giữa các bài
+                        time.sleep(random.uniform(1, 2))
+                        
+                except Exception as e:
+                    logger.warning(f"⚠️ Lỗi xử lý bài {i+1}: {str(e)}")
+                    continue
+            
+            logger.info(f"🎯 Hoàn thành: {len(articles)} URLs thực tế cho '{keyword}'")
+            
+        except TimeoutException:
+            logger.error("❌ Timeout khi tải trang Google News")
+        except Exception as e:
+            logger.error(f"❌ Lỗi Selenium: {str(e)}")
+        
+        return articles
+    
+    def _extract_domain_from_url(self, url: str) -> str:
+        """Trích xuất domain từ URL"""
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(url)
+            domain = parsed.netloc
+            if domain.startswith('www.'):
+                domain = domain[4:]
+            return domain
+        except:
+            return "N/A"
+    
+    def search_google_news_with_selenium(self, keyword: str, max_results: int = 20) -> List[NewsArticle]:
+        """
+        Method mới để tìm kiếm Google News với Selenium
+        
+        Args:
+            keyword: Từ khóa tìm kiếm
+            max_results: Số bài tối đa
+            
+        Returns:
+            List NewsArticle với URLs thực tế
+        """
+        if self.use_selenium and self.driver:
+            return self._get_real_urls_with_selenium(keyword, max_results)
+        else:
+            # Fallback về method cũ
+            return self.search_google_news(keyword, max_results)
+    
+    def close_selenium(self):
+        """Đóng Selenium driver"""
+        if self.driver:
+            try:
+                self.driver.quit()
+                logger.info("✅ Selenium driver đã được đóng")
+            except Exception as e:
+                logger.error(f"❌ Lỗi đóng Selenium: {str(e)}")
+    
     def get_rotating_session(self) -> requests.Session:
         """Get a session with rotating proxy and headers"""
         session_id = self.request_count // self.requests_per_session
@@ -407,89 +605,41 @@ class GoogleNewsScraper:
 
 def generate_keyword_variations(base_keyword: str, max_pages: int = 10) -> List[str]:
     """
-    Tạo các variation của keyword để mô phỏng search nhiều trang
+    Trả về keyword gốc - không tạo variations, chỉ lấy bài mới nhất
     
     Args:
         base_keyword: Keyword gốc
-        max_pages: Số "trang" muốn search
+        max_pages: Không sử dụng, chỉ giữ để compatibility
     
     Returns:
-        List các keyword variations
+        List chỉ chứa keyword gốc
     """
-    variations = [base_keyword]  # Keyword gốc
-    
-    # Thêm các variation để lấy nhiều bài hơn
-    suffixes = [
-        "news", "latest", "updates", "trends", "developments", 
-        "breakthrough", "innovation", "research", "market", "industry"
-    ]
-    
-    time_suffixes = [
-        "2024", "2025", "recent", "today", "this week", "latest news"
-    ]
-    
-    # Thêm suffixes
-    for suffix in suffixes[:max_pages-1]:
-        if len(variations) >= max_pages:
-            break
-        variations.append(f"{base_keyword} {suffix}")
-    
-    # Nếu vẫn chưa đủ, thêm time suffixes
-    for time_suffix in time_suffixes:
-        if len(variations) >= max_pages:
-            break
-        variations.append(f"{base_keyword} {time_suffix}")
-    
-    return variations[:max_pages]
+    # Chỉ trả về keyword gốc, không tạo variations
+    return [base_keyword]
 
 def crawl_keyword_multiple_pages(keyword: str, pages_per_keyword: int = 10, articles_per_page: int = 20, stats: CrawlStats = None) -> List[NewsArticle]:
     """
-    Crawl một keyword với nhiều "trang" (variations)
+    Crawl một keyword - chỉ lấy bài mới nhất không dùng variations
     
     Args:
         keyword: Keyword gốc
-        pages_per_keyword: Số trang muốn crawl
-        articles_per_page: Số bài mỗi trang
+        pages_per_keyword: Không sử dụng, chỉ giữ để compatibility
+        articles_per_page: Số bài muốn lấy
         stats: Object thống kê
     
     Returns:
-        List tất cả bài báo từ các "trang"
+        List bài báo mới nhất cho keyword
     """
     if stats is None:
         stats = CrawlStats()
     
-    all_articles = []
-    seen_links = set()  # Để tránh duplicate
+    print(f"🔍 Crawling latest articles for keyword: {keyword}")
     
-    print(f"🔍 Crawling {pages_per_keyword} pages for keyword: {keyword}")
+    # Chỉ crawl keyword gốc, lấy nhiều bài hơn để đảm bảo có đủ bài mới nhất
+    articles = simple_crawl_rss(keyword, articles_per_page, stats)
     
-    # Tạo các variation của keyword
-    keyword_variations = generate_keyword_variations(keyword, pages_per_keyword)
-    
-    for page_num, variation in enumerate(keyword_variations, 1):
-        print(f"   📄 Page {page_num}/{pages_per_keyword}: {variation}")
-        
-        # Delay giữa các trang của cùng keyword
-        if page_num > 1:
-            delay = random.uniform(2, 4)
-            print(f"   ⏳ Short delay: {delay:.1f}s...")
-            time.sleep(delay)
-        
-        # Crawl từng variation
-        page_articles = simple_crawl_rss(variation, articles_per_page, stats)
-        
-        # Lọc bỏ duplicate dựa trên link
-        unique_articles = []
-        for article in page_articles:
-            if article.link not in seen_links:
-                seen_links.add(article.link)
-                unique_articles.append(article)
-        
-        all_articles.extend(unique_articles)
-        print(f"   ✅ Page {page_num}: {len(unique_articles)} unique articles (total: {len(all_articles)})")
-    
-    print(f"🎯 Total unique articles for '{keyword}': {len(all_articles)}")
-    return all_articles
+    print(f"🎯 Found {len(articles)} articles for '{keyword}'")
+    return articles
 
 def simple_crawl_rss(keyword: str, max_results: int = 20, stats: CrawlStats = None) -> List[NewsArticle]:
     """Crawl Google News RSS đơn giản - ít bị chặn"""
@@ -561,6 +711,122 @@ def simple_crawl_rss(keyword: str, max_results: int = 20, stats: CrawlStats = No
         stats.failed_requests += 1
         stats.errors += 1
         return []
+
+def simple_crawl_with_selenium(keyword: str, max_results: int = 20, stats: CrawlStats = None) -> List[NewsArticle]:
+    """
+    Crawl Google News sử dụng Selenium để lấy current URL thực tế - bypass CAPTCHA
+    
+    Args:
+        keyword: Từ khóa tìm kiếm
+        max_results: Số bài tối đa
+        stats: Object thống kê
+        
+    Returns:
+        List NewsArticle với URLs thực tế
+    """
+    if stats is None:
+        stats = CrawlStats()
+    
+    try:
+        logger.info(f"🤖 Khởi tạo Selenium crawler cho: {keyword}")
+        
+        # Tạo scraper với Selenium
+        scraper = GoogleNewsScraper(use_selenium=True)
+        
+        if not scraper.use_selenium:
+            logger.warning("❌ Selenium không khả dụng, fallback về RSS")
+            scraper.close_selenium()
+            return simple_crawl_rss(keyword, max_results, stats)
+        
+        # Crawl với Selenium
+        articles = scraper.search_google_news_with_selenium(keyword, max_results)
+        
+        # Đóng Selenium
+        scraper.close_selenium()
+        
+        if articles:
+            stats.successful_requests += 1
+            logger.info(f"✅ Selenium: Tìm thấy {len(articles)} URLs thực tế cho '{keyword}'")
+        else:
+            stats.failed_requests += 1
+            logger.warning(f"⚠️ Selenium: Không tìm thấy bài nào cho '{keyword}'")
+        
+        return articles
+        
+    except Exception as e:
+        stats.failed_requests += 1
+        stats.errors += 1
+        logger.error(f"❌ Lỗi Selenium crawl cho '{keyword}': {str(e)}")
+        return []
+
+def smart_crawl_with_fallback(keyword: str, max_results: int = 20, stats: CrawlStats = None, use_selenium_first: bool = False) -> List[NewsArticle]:
+    """
+    Crawl thông minh với fallback: thử Selenium trước, nếu fail thì dùng RSS
+    
+    Args:
+        keyword: Từ khóa tìm kiếm
+        max_results: Số bài tối đa
+        stats: Object thống kê
+        use_selenium_first: Có thử Selenium trước không
+        
+    Returns:
+        List NewsArticle
+    """
+    if stats is None:
+        stats = CrawlStats()
+    
+    articles = []
+    
+    # Thử Selenium trước nếu được yêu cầu
+    if use_selenium_first:
+        logger.info(f"🤖 Thử Selenium trước cho: {keyword}")
+        articles = simple_crawl_with_selenium(keyword, max_results, stats)
+        
+        if articles and len(articles) >= max_results * 0.5:  # Nếu có ít nhất 50% số bài mong muốn
+            logger.info(f"✅ Selenium thành công cho '{keyword}': {len(articles)} bài")
+            return articles
+        else:
+            logger.warning(f"⚠️ Selenium không đạt kỳ vọng cho '{keyword}', fallback về RSS")
+    
+    # Fallback về RSS
+    logger.info(f"📡 Sử dụng RSS fallback cho: {keyword}")
+    rss_articles = simple_crawl_rss(keyword, max_results, stats)
+    
+    if rss_articles:
+        logger.info(f"✅ RSS thành công cho '{keyword}': {len(rss_articles)} bài")
+        return rss_articles
+    else:
+        logger.warning(f"❌ Cả Selenium và RSS đều thất bại cho '{keyword}'")
+        return articles  # Trả về kết quả Selenium dù ít
+
+def crawl_keyword_multiple_pages_v2(keyword: str, pages_per_keyword: int = 10, articles_per_page: int = 20, stats: CrawlStats = None, use_selenium: bool = False) -> List[NewsArticle]:
+    """
+    Phiên bản mới của crawl_keyword_multiple_pages với tùy chọn Selenium
+    
+    Args:
+        keyword: Keyword gốc
+        pages_per_keyword: Không sử dụng, chỉ giữ để compatibility
+        articles_per_page: Số bài muốn lấy
+        stats: Object thống kê
+        use_selenium: Có sử dụng Selenium không
+    
+    Returns:
+        List bài báo cho keyword
+    """
+    if stats is None:
+        stats = CrawlStats()
+    
+    print(f"🔍 Crawling keyword: {keyword}")
+    
+    if use_selenium:
+        # Dùng smart crawl với Selenium
+        articles = smart_crawl_with_fallback(keyword, articles_per_page, stats, use_selenium_first=True)
+    else:
+        # Dùng RSS như cũ
+        articles = simple_crawl_rss(keyword, articles_per_page, stats)
+    
+    print(f"🎯 Found {len(articles)} articles for '{keyword}'")
+    return articles
 
 def extract_domain(url: str) -> str:
     """Trích xuất domain từ URL"""
@@ -634,11 +900,12 @@ def bulk_crawl_to_csv(keywords: List[str], pages_per_keyword: int = 10, articles
                 time.sleep(delay)
             
             # Crawl nhiều trang cho keyword này
-            all_articles = crawl_keyword_multiple_pages(
+            all_articles = crawl_keyword_multiple_pages_v2(
                 keyword, 
                 pages_per_keyword, 
                 articles_per_page, 
-                stats
+                stats, 
+                use_selenium=True
             )
             
             # Ghi từng bài báo vào CSV
@@ -689,7 +956,7 @@ def print_final_stats(stats: CrawlStats, csv_filename: str):
 
 def crawl_single_keyword_deep(keyword: str, target_articles: int = 200, csv_filename: str = None) -> str:
     """
-    Crawl 1 keyword sâu để lấy nhiều bài (khoảng 200 bài)
+    Crawl 1 keyword để lấy bài mới nhất (không dùng variations)
     
     Args:
         keyword: Keyword muốn crawl
@@ -710,24 +977,17 @@ def crawl_single_keyword_deep(keyword: str, target_articles: int = 200, csv_file
     stats = CrawlStats()
     stats.total_keywords = 1
     
-    print(f"🔥 DEEP CRAWL FOR SINGLE KEYWORD")
+    print(f"🔥 CRAWL LATEST ARTICLES FOR SINGLE KEYWORD")
     print("=" * 60)
     print(f"🎯 Keyword: {keyword}")
     print(f"📊 Target articles: {target_articles}")
     print(f"📁 Output file: {csv_filename}")
     print("=" * 60)
     
-    all_articles = []
-    seen_links = set()  # Để tránh duplicate
+    print(f"🔍 Crawling latest articles for '{keyword}'...")
     
-    # Tính số trang cần crawl (mỗi trang ~20 bài)
-    articles_per_page = 20
-    estimated_pages = (target_articles // articles_per_page) + 2  # +2 để đảm bảo đủ
-    
-    print(f"🔍 Crawling up to {estimated_pages} variations of '{keyword}'...")
-    
-    # Tạo các variation của keyword
-    keyword_variations = generate_keyword_variations(keyword, estimated_pages)
+    # Chỉ crawl keyword gốc để lấy bài mới nhất
+    articles = simple_crawl_rss(keyword, target_articles, stats)
     
     # Tạo và mở file CSV
     with open(csv_filename, 'w', newline='', encoding='utf-8-sig') as csvfile:
@@ -738,55 +998,23 @@ def crawl_single_keyword_deep(keyword: str, target_articles: int = 200, csv_file
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
         
-        for page_num, variation in enumerate(keyword_variations, 1):
-            if len(all_articles) >= target_articles:
-                print(f"🎯 Reached target of {target_articles} articles, stopping...")
-                break
-                
-            print(f"\n📄 Page {page_num}/{len(keyword_variations)}: {variation}")
-            
-            # Delay giữa các trang
-            if page_num > 1:
-                delay = random.uniform(3, 6)
-                print(f"⏳ Delay: {delay:.1f}s...")
-                time.sleep(delay)
-            
-            # Crawl từng variation
-            page_articles = simple_crawl_rss(variation, articles_per_page, stats)
-            
-            # Lọc bỏ duplicate dựa trên link
-            new_articles = []
-            for article in page_articles:
-                if article.link not in seen_links:
-                    seen_links.add(article.link)
-                    new_articles.append(article)
-            
-            # Thêm vào danh sách tổng
-            all_articles.extend(new_articles)
-            
-            # Ghi từng bài báo mới vào CSV
-            for article in new_articles:
-                row = {
-                    'article_number': len(all_articles) - len(new_articles) + new_articles.index(article) + 1,
-                    'headline': article.headline,
-                    'link': article.link,
-                    'date': article.date,
-                    'source': article.source,
-                    'domain': extract_domain(article.link),
-                    'crawl_timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                }
-                writer.writerow(row)
-            
-            print(f"✅ Page {page_num}: +{len(new_articles)} new articles (total: {len(all_articles)})")
-            
-            # Progress bar
-            progress = min(len(all_articles) / target_articles * 100, 100)
-            print(f"📊 Progress: {progress:.1f}% ({len(all_articles)}/{target_articles})")
+        # Ghi từng bài báo vào CSV
+        for i, article in enumerate(articles, 1):
+            row = {
+                'article_number': i,
+                'headline': article.headline,
+                'link': article.link,
+                'date': article.date,
+                'source': article.source,
+                'domain': extract_domain(article.link),
+                'crawl_timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            }
+            writer.writerow(row)
     
-    stats.total_articles = len(all_articles)
+    stats.total_articles = len(articles)
     
     # In thống kê cuối cùng
-    print_single_keyword_stats(stats, csv_filename, keyword, len(all_articles), target_articles)
+    print_single_keyword_stats(stats, csv_filename, keyword, len(articles), target_articles)
     
     return csv_filename
 
@@ -909,7 +1137,7 @@ def crawl_multiple_keywords_deep(keywords: List[str], target_articles_per_keywor
 
 def crawl_single_keyword_for_multi(keyword: str, target_articles: int, stats: CrawlStats) -> List[NewsArticle]:
     """
-    Crawl 1 keyword sâu cho multi-keyword crawl
+    Crawl 1 keyword cho multi-keyword crawl - chỉ lấy bài mới nhất
     
     Args:
         keyword: Keyword muốn crawl
@@ -917,55 +1145,16 @@ def crawl_single_keyword_for_multi(keyword: str, target_articles: int, stats: Cr
         stats: Object thống kê chung
     
     Returns:
-        List các bài báo
+        List các bài báo mới nhất
     """
     
-    all_articles = []
-    seen_links = set()  # Để tránh duplicate
+    print(f"🔍 Crawling latest articles for '{keyword}'...")
     
-    # Tính số trang cần crawl (mỗi trang ~20 bài)
-    articles_per_page = 20
-    estimated_pages = (target_articles // articles_per_page) + 2  # +2 để đảm bảo đủ
+    # Chỉ crawl keyword gốc với số bài được yêu cầu
+    articles = simple_crawl_rss(keyword, target_articles, stats)
     
-    print(f"🔍 Crawling up to {estimated_pages} variations of '{keyword}'...")
-    
-    # Tạo các variation của keyword
-    keyword_variations = generate_keyword_variations(keyword, estimated_pages)
-    
-    for page_num, variation in enumerate(keyword_variations, 1):
-        if len(all_articles) >= target_articles:
-            print(f"🎯 Reached target of {target_articles} articles, stopping...")
-            break
-            
-        print(f"   📄 Page {page_num}: {variation}")
-        
-        # Delay giữa các trang
-        if page_num > 1:
-            delay = random.uniform(2, 4)
-            print(f"   ⏳ Delay: {delay:.1f}s...")
-            time.sleep(delay)
-        
-        # Crawl từng variation
-        page_articles = simple_crawl_rss(variation, articles_per_page, stats)
-        
-        # Lọc bỏ duplicate dựa trên link
-        new_articles = []
-        for article in page_articles:
-            if article.link not in seen_links:
-                seen_links.add(article.link)
-                new_articles.append(article)
-        
-        # Thêm vào danh sách tổng
-        all_articles.extend(new_articles)
-        
-        print(f"   ✅ Page {page_num}: +{len(new_articles)} new articles (total: {len(all_articles)})")
-        
-        # Progress bar cho keyword này
-        progress = min(len(all_articles) / target_articles * 100, 100)
-        print(f"   📊 Progress: {progress:.1f}% ({len(all_articles)}/{target_articles})")
-    
-    print(f"🎯 Total articles for '{keyword}': {len(all_articles)}")
-    return all_articles
+    print(f"🎯 Found {len(articles)} articles for '{keyword}'")
+    return articles
 
 def print_multi_keywords_stats(stats: CrawlStats, csv_filename: str, keywords: List[str], target_per_keyword: int, total_articles: int):
     """In thống kê cho multi-keywords crawl"""
@@ -1077,57 +1266,574 @@ def read_keywords_from_csv(csv_file_path: str, keyword_column: str = None, skip_
         print(f"❌ Error reading CSV file: {str(e)}")
         return []
 
+def is_within_working_hours() -> bool:
+    """
+    Kiểm tra xem hiện tại có trong giờ làm việc không (10h - 18h)
+    
+    Returns:
+        True nếu trong giờ làm việc, False nếu không
+    """
+    now = datetime.now()
+    current_time = now.time()
+    
+    # Giờ làm việc: 10:00 - 18:00
+    start_time = dt_time(10, 0)  # 10:00 AM
+    end_time = dt_time(18, 0)    # 6:00 PM
+    
+    return start_time <= current_time <= end_time
 
-def main():
-    """Hàm chính để crawl keywords từ file Keywords.csv"""
+def batch_crawl_keywords(keywords: List[str], articles_per_keyword: int = 10, batch_id: str = None) -> str:
+    """
+    Crawl keywords theo batch với số lượng bài ít để test tần suất cao
     
-    print("🔥 GOOGLE NEWS KEYWORD CRAWLER")
-    print("=" * 50)
+    Args:
+        keywords: Danh sách keywords
+        articles_per_keyword: Số bài mỗi keyword (mặc định 10)
+        batch_id: ID của batch (nếu None sẽ tự tạo từ timestamp)
     
-    # =================================================================
-    # 📝 ĐỌC KEYWORDS TỪ FILE CSV:
-    # =================================================================
-    csv_file_path = "keyword_csvs/Keywords.csv"  # Đường dẫn file CSV
+    Returns:
+        Tên file CSV đã tạo
+    """
     
-    print(f"📖 Reading keywords from: {csv_file_path}")
+    # Tạo batch ID và tên file
+    if batch_id is None:
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        batch_id = f"batch_{timestamp}"
     
-    # Đọc keywords từ CSV
+    csv_filename = f"../batches/{batch_id}.csv"
+    
+    # Tạo thư mục batches nếu chưa có
+    os.makedirs("../batches", exist_ok=True)
+    
+    # Khởi tạo stats
+    stats = CrawlStats()
+    stats.total_keywords = len(keywords)
+    
+    batch_start_time = datetime.now()
+    
+    print(f"🔥 BATCH CRAWL - HIGH FREQUENCY TEST")
+    print("=" * 60)
+    print(f"🆔 Batch ID: {batch_id}")
+    print(f"⏰ Start Time: {batch_start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"📝 Keywords: {len(keywords)}")
+    print(f"📊 Articles per keyword: {articles_per_keyword}")
+    print(f"🎯 Expected total articles: {len(keywords) * articles_per_keyword}")
+    print(f"📁 Output file: {csv_filename}")
+    print("=" * 60)
+    
+    all_articles = []
+    
+    # Tạo và mở file CSV
+    with open(csv_filename, 'w', newline='', encoding='utf-8-sig') as csvfile:
+        fieldnames = [
+            'batch_id', 'keyword', 'article_number', 'headline', 'link', 
+            'date', 'source', 'domain', 'crawl_timestamp', 'keyword_index'
+        ]
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        
+        # Crawl từng keyword
+        for keyword_index, keyword in enumerate(keywords, 1):
+            print(f"\n🔍 [{keyword_index}/{len(keywords)}] Processing: {keyword}")
+            
+            # Delay ngắn giữa các keyword (1-3 giây)
+            if keyword_index > 1:
+                delay = random.uniform(1, 3)
+                print(f"⏳ Short delay: {delay:.1f}s...")
+                time.sleep(delay)
+            
+            # Crawl keyword với số lượng bài ít
+            keyword_articles = simple_crawl_rss(keyword, articles_per_keyword, stats)
+            
+            # Ghi từng bài báo vào CSV
+            for i, article in enumerate(keyword_articles, 1):
+                row = {
+                    'batch_id': batch_id,
+                    'keyword': keyword,
+                    'article_number': i,
+                    'headline': article.headline,
+                    'link': article.link,
+                    'date': article.date,
+                    'source': article.source,
+                    'domain': extract_domain(article.link),
+                    'crawl_timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    'keyword_index': keyword_index
+                }
+                writer.writerow(row)
+            
+            all_articles.extend(keyword_articles)
+            
+            print(f"✅ Found {len(keyword_articles)} articles for '{keyword}'")
+            
+            # Progress update
+            progress = (keyword_index / len(keywords)) * 100
+            print(f"📊 Progress: {progress:.1f}% | Total articles: {len(all_articles)}")
+    
+    batch_end_time = datetime.now()
+    batch_duration = batch_end_time - batch_start_time
+    
+    stats.total_articles = len(all_articles)
+    
+    # In thống kê batch
+    print_batch_stats(stats, csv_filename, batch_id, batch_start_time, batch_end_time, batch_duration)
+    
+    return csv_filename
+
+def print_batch_stats(stats: CrawlStats, csv_filename: str, batch_id: str, start_time: datetime, end_time: datetime, duration):
+    """In thống kê cho batch crawl"""
+    print("\n" + "=" * 60)
+    print("🎯 BATCH CRAWL RESULTS")
+    print("=" * 60)
+    print(f"🆔 Batch ID: {batch_id}")
+    print(f"⏰ Start Time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"🏁 End Time: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"⏱️ Duration: {str(duration).split('.')[0]}")
+    print(f"📋 Keywords Processed: {stats.total_keywords}")
+    print(f"📰 Total Articles: {stats.total_articles}")
+    print(f"✅ Successful Requests: {stats.successful_requests}")
+    print(f"❌ Failed Requests: {stats.failed_requests}")
+    print(f"⚠️ Total Errors: {stats.errors}")
+    print(f"🚫 Captcha Skipped: {stats.captcha_skipped}")
+    print(f"📁 Output File: {csv_filename}")
+    
+    if stats.total_keywords > 0:
+        success_rate = (stats.successful_requests / stats.total_keywords) * 100
+        avg_articles = stats.total_articles / stats.total_keywords
+        print(f"📈 Success Rate: {success_rate:.1f}%")
+        print(f"📊 Avg Articles/Keyword: {avg_articles:.1f}")
+        
+        # Tính tốc độ crawl
+        total_minutes = duration.total_seconds() / 60
+        keywords_per_minute = stats.total_keywords / total_minutes if total_minutes > 0 else 0
+        articles_per_minute = stats.total_articles / total_minutes if total_minutes > 0 else 0
+        
+        print(f"⚡ Crawl Speed: {keywords_per_minute:.1f} keywords/min, {articles_per_minute:.1f} articles/min")
+    
+    print("=" * 60)
+    print("🎉 Batch completed successfully!")
+
+def scheduled_crawler():
+    """
+    Hàm chính để chạy theo schedule - được gọi bởi task scheduler
+    Chạy mỗi tiếng 1 lần từ lúc kích hoạt đến khi dừng
+    """
+    
+    print(f"🚀 SCHEDULED CRAWLER STARTED")
+    print(f"⏰ Current time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print()
+    
+    # Đọc keywords từ file CSV
+    csv_file_path = "keyword_csvs/Keywords.csv"
     keywords = read_keywords_from_csv(csv_file_path, keyword_column="Keywords")
     
     if not keywords:
-        print("❌ No keywords loaded from CSV. Please check your file.")
+        print("❌ No keywords loaded from CSV. Exiting...")
         return
     
-    # =================================================================
-    # ⚙️ CẤU HÌNH CRAWL:
-    # =================================================================
-    target_articles_per_keyword = 200   # Số bài mỗi keyword
-    
-    print("\n⚙️ CRAWL CONFIGURATION:")
-    print(f"   📝 Number of keywords: {len(keywords)}")
-    print(f"   📊 Target articles per keyword: {target_articles_per_keyword}")
-    print(f"   🎯 Total target articles: {len(keywords) * target_articles_per_keyword}")
-    print()
-    
-    # Hiển thị một số keywords đầu tiên
-    print("📋 FIRST 10 KEYWORDS TO CRAWL:")
-    for i, keyword in enumerate(keywords[:10], 1):
-        print(f"   {i}. {keyword}")
-    
-    if len(keywords) > 10:
-        print(f"   ... and {len(keywords) - 10} more keywords")
-    print()
-    
-    # Bắt đầu crawl
-    print("🚀 Starting crawl...")
-    csv_file = crawl_multiple_keywords_deep(
+    # Chạy batch crawl với 10 bài mỗi keyword
+    batch_file = batch_crawl_keywords(
         keywords=keywords,
-        target_articles_per_keyword=target_articles_per_keyword
+        articles_per_keyword=10
     )
     
-    print(f"\n📁 Data exported to: {csv_file}")
-    print(f"🔍 You now have data for {len(keywords)} keywords!")
-    print("💡 Open the CSV file in Excel to view your data!")
+    print(f"\n📁 Batch file created: {batch_file}")
+    print("✅ Scheduled crawl completed!")
+
+def create_batch_schedule_script():
+    """
+    Tạo file .bat để chạy với Windows Task Scheduler
+    """
+    
+    # Lấy đường dẫn hiện tại
+    current_dir = os.getcwd()
+    python_script = os.path.join(current_dir, "pypassCapcha.py")
+    
+    bat_content = f'''@echo off
+cd /d "{current_dir}"
+python "{python_script}" --scheduled
+pause
+'''
+    
+    bat_filename = "run_scheduled_crawler.bat"
+    
+    with open(bat_filename, 'w', encoding='utf-8') as f:
+        f.write(bat_content)
+    
+    print(f"📁 Created batch file: {bat_filename}")
+    print("\n🔧 TASK SCHEDULER SETUP INSTRUCTIONS:")
+    print("=" * 50)
+    print("1. Open Windows Task Scheduler")
+    print("2. Create Basic Task...")
+    print("3. Name: 'Google News Crawler'")
+    print("4. Trigger: Daily")
+    print("5. Start time: [Choose your preferred start time]")
+    print("6. Repeat task every: 1 hour")
+    print("7. For a duration of: Indefinitely (or choose your duration)")
+    print(f"8. Action: Start a program")
+    print(f"9. Program/script: {os.path.abspath(bat_filename)}")
+    print("10. Click Finish")
+    print("=" * 50)
+    print("\n💡 The crawler will run every 1 hour from when you activate it")
+    print("💡 Each batch will crawl ~600 articles (60 keywords x 10 articles)")
+    print("💡 To stop: Disable or delete the task in Task Scheduler")
+
+def run_manual_test():
+    """
+    Chạy test thủ công để kiểm tra
+    """
+    print("🧪 MANUAL TEST MODE")
+    print("=" * 40)
+    
+    # Đọc keywords
+    csv_file_path = "keyword_csvs/Keywords.csv"
+    keywords = read_keywords_from_csv(csv_file_path, keyword_column="Keywords")
+    
+    if not keywords:
+        print("❌ No keywords loaded. Exiting...")
+        return
+    
+    # Lấy 5 keywords đầu tiên để test nhanh
+    test_keywords = keywords[:5]
+    print(f"🧪 Testing with {len(test_keywords)} keywords:")
+    for i, kw in enumerate(test_keywords, 1):
+        print(f"   {i}. {kw}")
+    print()
+    
+    # Chạy batch test
+    batch_file = batch_crawl_keywords(
+        keywords=test_keywords,
+        articles_per_keyword=10,
+        batch_id=f"test_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    )
+    
+    print(f"\n📁 Test batch file: {batch_file}")
+    print("✅ Manual test completed!")
+
+def demo_selenium_test():
+    """
+    Demo function để test Selenium crawler với một vài keywords
+    """
+    print("🤖 SELENIUM DEMO TEST")
+    print("=" * 50)
+    print("🔧 Kiểm tra Selenium WebDriver...")
+    print("💡 Lần đầu chạy sẽ tự động download ChromeDriver")
+    print("⏳ Vui lòng đợi...")
+    print()
+    
+    # Test keywords
+    test_keywords = ["artificial intelligence", "climate change", "technology"]
+    
+    print(f"🧪 Testing với {len(test_keywords)} keywords:")
+    for i, kw in enumerate(test_keywords, 1):
+        print(f"   {i}. {kw}")
+    print()
+    
+    all_articles = []
+    stats = CrawlStats()
+    
+    # Test từng keyword
+    for i, keyword in enumerate(test_keywords, 1):
+        print(f"\n🔍 [{i}/{len(test_keywords)}] Testing: {keyword}")
+        print("-" * 40)
+        
+        try:
+            # Test Selenium
+            articles = simple_crawl_with_selenium(keyword, max_results=5, stats=stats)
+            
+            if articles:
+                print(f"✅ Selenium thành công: {len(articles)} bài")
+                for j, article in enumerate(articles[:3], 1):  # Show first 3
+                    print(f"   {j}. {article.headline[:60]}...")
+                    print(f"      🔗 {article.link}")
+                all_articles.extend(articles)
+            else:
+                print(f"❌ Selenium thất bại cho '{keyword}'")
+            
+        except Exception as e:
+            print(f"❌ Lỗi test '{keyword}': {str(e)}")
+            stats.errors += 1
+        
+        # Delay giữa các test
+        if i < len(test_keywords):
+            time.sleep(2)
+    
+    # Kết quả tổng
+    print("\n" + "=" * 50)
+    print("🎯 KẾT QUẢ DEMO TEST")
+    print("=" * 50)
+    print(f"📊 Total articles: {len(all_articles)}")
+    print(f"✅ Successful requests: {stats.successful_requests}")
+    print(f"❌ Failed requests: {stats.failed_requests}")
+    print(f"⚠️ Errors: {stats.errors}")
+    
+    if len(all_articles) > 0:
+        print("🎉 Selenium hoạt động tốt!")
+        print("💡 Có thể sử dụng Selenium mode trong bulk crawl")
+        
+        # Export demo results
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        demo_file = f"selenium_demo_{timestamp}.csv"
+        
+        with open(demo_file, 'w', newline='', encoding='utf-8-sig') as csvfile:
+            fieldnames = ['keyword', 'headline', 'link', 'date', 'source', 'domain']
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
+            
+            for article in all_articles:
+                for kw in test_keywords:
+                    if any(word.lower() in article.headline.lower() for word in kw.split()):
+                        writer.writerow({
+                            'keyword': kw,
+                            'headline': article.headline,
+                            'link': article.link,
+                            'date': article.date,
+                            'source': article.source,
+                            'domain': extract_domain(article.link)
+                        })
+                        break
+        
+        print(f"📁 Demo results exported to: {demo_file}")
+    else:
+        print("❌ Selenium không hoạt động. Kiểm tra:")
+        print("   - Chrome browser đã cài đặt?")
+        print("   - Internet connection?")
+        print("   - Firewall/antivirus blocking?")
+
+def create_selenium_requirements():
+    """Tạo file requirements.txt cho Selenium"""
+    requirements = """# Core packages
+requests==2.31.0
+beautifulsoup4==4.12.2
+fake-useragent==1.4.0
+lxml==4.9.3
+
+# Selenium packages
+selenium==4.15.2
+webdriver-manager==4.0.1
+
+# Additional packages
+python-dateutil==2.8.2
+urllib3==2.0.7
+"""
+    
+    with open('requirements_selenium.txt', 'w', encoding='utf-8') as f:
+        f.write(requirements)
+    
+    print("📁 Created requirements_selenium.txt")
+    print("\n🔧 SELENIUM SETUP INSTRUCTIONS:")
+    print("=" * 40)
+    print("1. Install required packages:")
+    print("   pip install -r requirements_selenium.txt")
+    print("\n2. Make sure Chrome browser is installed")
+    print("\n3. First run will auto-download ChromeDriver")
+    print("\n4. Run demo test:")
+    print("   python pypassCapcha.py --selenium-demo")
+
+def bulk_crawl_with_selenium(keywords: List[str], articles_per_keyword: int = 20, csv_filename: str = None) -> str:
+    """
+    Bulk crawl sử dụng Selenium cho URLs thực tế
+    
+    Args:
+        keywords: Danh sách keywords
+        articles_per_keyword: Số bài mỗi keyword
+        csv_filename: Tên file CSV output
+    
+    Returns:
+        Tên file CSV đã tạo
+    """
+    
+    # Tạo tên file CSV với timestamp
+    if csv_filename is None:
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        csv_filename = f"selenium_crawl_{timestamp}.csv"
+    
+    # Khởi tạo stats
+    stats = CrawlStats()
+    stats.total_keywords = len(keywords)
+    
+    print(f"🤖 SELENIUM BULK CRAWLER")
+    print("=" * 60)
+    print(f"📝 Keywords: {len(keywords)}")
+    print(f"📊 Articles per keyword: {articles_per_keyword}")
+    print(f"🎯 Target articles: {len(keywords) * articles_per_keyword}")
+    print(f"📁 Output file: {csv_filename}")
+    print("⚠️ Lưu ý: Selenium chậm hơn RSS nhưng có URLs thực tế")
+    print("=" * 60)
+    
+    all_articles = []
+    
+    # Tạo và mở file CSV
+    with open(csv_filename, 'w', newline='', encoding='utf-8-sig') as csvfile:
+        fieldnames = [
+            'keyword', 'article_number', 'headline', 'link', 
+            'date', 'source', 'domain', 'crawl_timestamp', 'method'
+        ]
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        
+        # Crawl từng keyword
+        for keyword_index, keyword in enumerate(keywords, 1):
+            print(f"\n🔍 [{keyword_index}/{len(keywords)}] Processing: {keyword}")
+            
+            # Delay giữa các keywords (longer cho Selenium)
+            if keyword_index > 1:
+                delay = random.uniform(10, 20)
+                print(f"⏳ Selenium delay: {delay:.1f}s...")
+                time.sleep(delay)
+            
+            # Crawl với smart fallback (Selenium first)
+            keyword_articles = smart_crawl_with_fallback(
+                keyword, 
+                articles_per_keyword, 
+                stats, 
+                use_selenium_first=True
+            )
+            
+            # Ghi từng bài báo vào CSV
+            for i, article in enumerate(keyword_articles, 1):
+                row = {
+                    'keyword': keyword,
+                    'article_number': i,
+                    'headline': article.headline,
+                    'link': article.link,
+                    'date': article.date,
+                    'source': article.source,
+                    'domain': extract_domain(article.link),
+                    'crawl_timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    'method': 'Selenium+RSS'
+                }
+                writer.writerow(row)
+            
+            all_articles.extend(keyword_articles)
+            
+            # Progress update
+            progress = (keyword_index / len(keywords)) * 100
+            print(f"✅ Completed '{keyword}': {len(keyword_articles)} articles")
+            print(f"📊 Progress: {progress:.1f}% | Total: {len(all_articles)} articles")
+    
+    stats.total_articles = len(all_articles)
+    
+    # In thống kê cuối cùng
+    print_selenium_bulk_stats(stats, csv_filename, keywords, articles_per_keyword)
+    
+    return csv_filename
+
+def print_selenium_bulk_stats(stats: CrawlStats, csv_filename: str, keywords: List[str], target_per_keyword: int):
+    """In thống kê cho Selenium bulk crawl"""
+    print("\n" + "=" * 60)
+    print("🤖 SELENIUM BULK CRAWL RESULTS")
+    print("=" * 60)
+    print(f"📝 Keywords processed: {len(keywords)}")
+    print(f"📰 Total articles: {stats.total_articles}")
+    print(f"🎯 Target articles: {len(keywords) * target_per_keyword}")
+    print(f"📊 Average per keyword: {stats.total_articles / len(keywords):.1f}")
+    print(f"✅ Successful requests: {stats.successful_requests}")
+    print(f"❌ Failed requests: {stats.failed_requests}")
+    print(f"⚠️ Errors: {stats.errors}")
+    print(f"📁 Output file: {csv_filename}")
+    
+    # Success rate
+    if len(keywords) > 0:
+        success_rate = (stats.successful_requests / len(keywords)) * 100
+        print(f"📈 Success rate: {success_rate:.1f}%")
+    
+    print("=" * 60)
+    print("🎉 Selenium bulk crawl completed!")
+    print("💡 URLs trong file CSV là URLs thực tế (không phải Google redirect)")
+
+def main():
+    """Hàm chính được cập nhật để hỗ trợ Selenium và các mode khác nhau"""
+    
+    import sys
+    
+    # Kiểm tra command line arguments
+    if len(sys.argv) > 1:
+        if sys.argv[1] == '--scheduled':
+            # Mode chạy theo schedule
+            scheduled_crawler()
+            return
+        elif sys.argv[1] == '--test':
+            # Mode test thủ công
+            run_manual_test()
+            return
+        elif sys.argv[1] == '--setup':
+            # Mode setup task scheduler
+            create_batch_schedule_script()
+            return
+        elif sys.argv[1] == '--selenium-demo':
+            # Mode demo Selenium
+            demo_selenium_test()
+            return
+        elif sys.argv[1] == '--selenium-setup':
+            # Mode setup Selenium requirements
+            create_selenium_requirements()
+            return
+    
+    # Mode mặc định - hỏi user
+    print("🔥 GOOGLE NEWS BATCH CRAWLER")
+    print("=" * 50)
+    print("Select mode:")
+    print("1. Manual test (5 keywords x 10 articles)")
+    print("2. Create scheduler setup")
+    print("3. Run scheduled crawl")
+    print("4. Full crawl (RSS mode)")
+    print("5. 🤖 Selenium demo test")
+    print("6. 🤖 Selenium bulk crawl")
+    print("7. 🔧 Setup Selenium requirements")
+    
+    choice = input("\nEnter your choice (1-7): ").strip()
+    
+    if choice == '1':
+        run_manual_test()
+    elif choice == '2':
+        create_batch_schedule_script()
+    elif choice == '3':
+        scheduled_crawler()
+    elif choice == '4':
+        # Mode crawl đầy đủ như cũ (RSS)
+        csv_file_path = "keyword_csvs/Keywords.csv"
+        keywords = read_keywords_from_csv(csv_file_path, keyword_column="Keywords")
+        
+        if not keywords:
+            print("❌ No keywords loaded from CSV. Please check your file.")
+            return
+        
+        target_articles_per_keyword = 200
+        csv_file = crawl_multiple_keywords_deep(
+            keywords=keywords,
+            target_articles_per_keyword=target_articles_per_keyword
+        )
+        
+        print(f"\n📁 Data exported to: {csv_file}")
+    elif choice == '5':
+        # Selenium demo test
+        demo_selenium_test()
+    elif choice == '6':
+        # Selenium bulk crawl
+        csv_file_path = "keyword_csvs/Keywords.csv"
+        keywords = read_keywords_from_csv(csv_file_path, keyword_column="Keywords")
+        
+        if not keywords:
+            print("❌ No keywords loaded from CSV. Please check your file.")
+            return
+        
+        # Hỏi số bài per keyword
+        try:
+            articles_per_keyword = int(input("Số bài mỗi keyword (default 20): ") or "20")
+        except:
+            articles_per_keyword = 20
+        
+        csv_file = bulk_crawl_with_selenium(
+            keywords=keywords,
+            articles_per_keyword=articles_per_keyword
+        )
+        
+        print(f"\n📁 Selenium data exported to: {csv_file}")
+    elif choice == '7':
+        # Setup Selenium requirements
+        create_selenium_requirements()
+    else:
+        print("❌ Invalid choice. Exiting...")
 
 if __name__ == "__main__":
     main()
