@@ -12,7 +12,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 import logging
 import csv
-from datetime import datetime
+from datetime import datetime, time as dt_time
 import os
 
 # Setup logging
@@ -407,89 +407,41 @@ class GoogleNewsScraper:
 
 def generate_keyword_variations(base_keyword: str, max_pages: int = 10) -> List[str]:
     """
-    Tạo các variation của keyword để mô phỏng search nhiều trang
+    Trả về keyword gốc - không tạo variations, chỉ lấy bài mới nhất
     
     Args:
         base_keyword: Keyword gốc
-        max_pages: Số "trang" muốn search
+        max_pages: Không sử dụng, chỉ giữ để compatibility
     
     Returns:
-        List các keyword variations
+        List chỉ chứa keyword gốc
     """
-    variations = [base_keyword]  # Keyword gốc
-    
-    # Thêm các variation để lấy nhiều bài hơn
-    suffixes = [
-        "news", "latest", "updates", "trends", "developments", 
-        "breakthrough", "innovation", "research", "market", "industry"
-    ]
-    
-    time_suffixes = [
-        "2024", "2025", "recent", "today", "this week", "latest news"
-    ]
-    
-    # Thêm suffixes
-    for suffix in suffixes[:max_pages-1]:
-        if len(variations) >= max_pages:
-            break
-        variations.append(f"{base_keyword} {suffix}")
-    
-    # Nếu vẫn chưa đủ, thêm time suffixes
-    for time_suffix in time_suffixes:
-        if len(variations) >= max_pages:
-            break
-        variations.append(f"{base_keyword} {time_suffix}")
-    
-    return variations[:max_pages]
+    # Chỉ trả về keyword gốc, không tạo variations
+    return [base_keyword]
 
 def crawl_keyword_multiple_pages(keyword: str, pages_per_keyword: int = 10, articles_per_page: int = 20, stats: CrawlStats = None) -> List[NewsArticle]:
     """
-    Crawl một keyword với nhiều "trang" (variations)
+    Crawl một keyword - chỉ lấy bài mới nhất không dùng variations
     
     Args:
         keyword: Keyword gốc
-        pages_per_keyword: Số trang muốn crawl
-        articles_per_page: Số bài mỗi trang
+        pages_per_keyword: Không sử dụng, chỉ giữ để compatibility
+        articles_per_page: Số bài muốn lấy
         stats: Object thống kê
     
     Returns:
-        List tất cả bài báo từ các "trang"
+        List bài báo mới nhất cho keyword
     """
     if stats is None:
         stats = CrawlStats()
     
-    all_articles = []
-    seen_links = set()  # Để tránh duplicate
+    print(f"🔍 Crawling latest articles for keyword: {keyword}")
     
-    print(f"🔍 Crawling {pages_per_keyword} pages for keyword: {keyword}")
+    # Chỉ crawl keyword gốc, lấy nhiều bài hơn để đảm bảo có đủ bài mới nhất
+    articles = simple_crawl_rss(keyword, articles_per_page, stats)
     
-    # Tạo các variation của keyword
-    keyword_variations = generate_keyword_variations(keyword, pages_per_keyword)
-    
-    for page_num, variation in enumerate(keyword_variations, 1):
-        print(f"   📄 Page {page_num}/{pages_per_keyword}: {variation}")
-        
-        # Delay giữa các trang của cùng keyword
-        if page_num > 1:
-            delay = random.uniform(2, 4)
-            print(f"   ⏳ Short delay: {delay:.1f}s...")
-            time.sleep(delay)
-        
-        # Crawl từng variation
-        page_articles = simple_crawl_rss(variation, articles_per_page, stats)
-        
-        # Lọc bỏ duplicate dựa trên link
-        unique_articles = []
-        for article in page_articles:
-            if article.link not in seen_links:
-                seen_links.add(article.link)
-                unique_articles.append(article)
-        
-        all_articles.extend(unique_articles)
-        print(f"   ✅ Page {page_num}: {len(unique_articles)} unique articles (total: {len(all_articles)})")
-    
-    print(f"🎯 Total unique articles for '{keyword}': {len(all_articles)}")
-    return all_articles
+    print(f"🎯 Found {len(articles)} articles for '{keyword}'")
+    return articles
 
 def simple_crawl_rss(keyword: str, max_results: int = 20, stats: CrawlStats = None) -> List[NewsArticle]:
     """Crawl Google News RSS đơn giản - ít bị chặn"""
@@ -689,7 +641,7 @@ def print_final_stats(stats: CrawlStats, csv_filename: str):
 
 def crawl_single_keyword_deep(keyword: str, target_articles: int = 200, csv_filename: str = None) -> str:
     """
-    Crawl 1 keyword sâu để lấy nhiều bài (khoảng 200 bài)
+    Crawl 1 keyword để lấy bài mới nhất (không dùng variations)
     
     Args:
         keyword: Keyword muốn crawl
@@ -710,24 +662,17 @@ def crawl_single_keyword_deep(keyword: str, target_articles: int = 200, csv_file
     stats = CrawlStats()
     stats.total_keywords = 1
     
-    print(f"🔥 DEEP CRAWL FOR SINGLE KEYWORD")
+    print(f"🔥 CRAWL LATEST ARTICLES FOR SINGLE KEYWORD")
     print("=" * 60)
     print(f"🎯 Keyword: {keyword}")
     print(f"📊 Target articles: {target_articles}")
     print(f"📁 Output file: {csv_filename}")
     print("=" * 60)
     
-    all_articles = []
-    seen_links = set()  # Để tránh duplicate
+    print(f"🔍 Crawling latest articles for '{keyword}'...")
     
-    # Tính số trang cần crawl (mỗi trang ~20 bài)
-    articles_per_page = 20
-    estimated_pages = (target_articles // articles_per_page) + 2  # +2 để đảm bảo đủ
-    
-    print(f"🔍 Crawling up to {estimated_pages} variations of '{keyword}'...")
-    
-    # Tạo các variation của keyword
-    keyword_variations = generate_keyword_variations(keyword, estimated_pages)
+    # Chỉ crawl keyword gốc để lấy bài mới nhất
+    articles = simple_crawl_rss(keyword, target_articles, stats)
     
     # Tạo và mở file CSV
     with open(csv_filename, 'w', newline='', encoding='utf-8-sig') as csvfile:
@@ -738,55 +683,23 @@ def crawl_single_keyword_deep(keyword: str, target_articles: int = 200, csv_file
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
         
-        for page_num, variation in enumerate(keyword_variations, 1):
-            if len(all_articles) >= target_articles:
-                print(f"🎯 Reached target of {target_articles} articles, stopping...")
-                break
-                
-            print(f"\n📄 Page {page_num}/{len(keyword_variations)}: {variation}")
-            
-            # Delay giữa các trang
-            if page_num > 1:
-                delay = random.uniform(3, 6)
-                print(f"⏳ Delay: {delay:.1f}s...")
-                time.sleep(delay)
-            
-            # Crawl từng variation
-            page_articles = simple_crawl_rss(variation, articles_per_page, stats)
-            
-            # Lọc bỏ duplicate dựa trên link
-            new_articles = []
-            for article in page_articles:
-                if article.link not in seen_links:
-                    seen_links.add(article.link)
-                    new_articles.append(article)
-            
-            # Thêm vào danh sách tổng
-            all_articles.extend(new_articles)
-            
-            # Ghi từng bài báo mới vào CSV
-            for article in new_articles:
-                row = {
-                    'article_number': len(all_articles) - len(new_articles) + new_articles.index(article) + 1,
-                    'headline': article.headline,
-                    'link': article.link,
-                    'date': article.date,
-                    'source': article.source,
-                    'domain': extract_domain(article.link),
-                    'crawl_timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                }
-                writer.writerow(row)
-            
-            print(f"✅ Page {page_num}: +{len(new_articles)} new articles (total: {len(all_articles)})")
-            
-            # Progress bar
-            progress = min(len(all_articles) / target_articles * 100, 100)
-            print(f"📊 Progress: {progress:.1f}% ({len(all_articles)}/{target_articles})")
+        # Ghi từng bài báo vào CSV
+        for i, article in enumerate(articles, 1):
+            row = {
+                'article_number': i,
+                'headline': article.headline,
+                'link': article.link,
+                'date': article.date,
+                'source': article.source,
+                'domain': extract_domain(article.link),
+                'crawl_timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            }
+            writer.writerow(row)
     
-    stats.total_articles = len(all_articles)
+    stats.total_articles = len(articles)
     
     # In thống kê cuối cùng
-    print_single_keyword_stats(stats, csv_filename, keyword, len(all_articles), target_articles)
+    print_single_keyword_stats(stats, csv_filename, keyword, len(articles), target_articles)
     
     return csv_filename
 
@@ -909,7 +822,7 @@ def crawl_multiple_keywords_deep(keywords: List[str], target_articles_per_keywor
 
 def crawl_single_keyword_for_multi(keyword: str, target_articles: int, stats: CrawlStats) -> List[NewsArticle]:
     """
-    Crawl 1 keyword sâu cho multi-keyword crawl
+    Crawl 1 keyword cho multi-keyword crawl - chỉ lấy bài mới nhất
     
     Args:
         keyword: Keyword muốn crawl
@@ -917,55 +830,16 @@ def crawl_single_keyword_for_multi(keyword: str, target_articles: int, stats: Cr
         stats: Object thống kê chung
     
     Returns:
-        List các bài báo
+        List các bài báo mới nhất
     """
     
-    all_articles = []
-    seen_links = set()  # Để tránh duplicate
+    print(f"🔍 Crawling latest articles for '{keyword}'...")
     
-    # Tính số trang cần crawl (mỗi trang ~20 bài)
-    articles_per_page = 20
-    estimated_pages = (target_articles // articles_per_page) + 2  # +2 để đảm bảo đủ
+    # Chỉ crawl keyword gốc với số bài được yêu cầu
+    articles = simple_crawl_rss(keyword, target_articles, stats)
     
-    print(f"🔍 Crawling up to {estimated_pages} variations of '{keyword}'...")
-    
-    # Tạo các variation của keyword
-    keyword_variations = generate_keyword_variations(keyword, estimated_pages)
-    
-    for page_num, variation in enumerate(keyword_variations, 1):
-        if len(all_articles) >= target_articles:
-            print(f"🎯 Reached target of {target_articles} articles, stopping...")
-            break
-            
-        print(f"   📄 Page {page_num}: {variation}")
-        
-        # Delay giữa các trang
-        if page_num > 1:
-            delay = random.uniform(2, 4)
-            print(f"   ⏳ Delay: {delay:.1f}s...")
-            time.sleep(delay)
-        
-        # Crawl từng variation
-        page_articles = simple_crawl_rss(variation, articles_per_page, stats)
-        
-        # Lọc bỏ duplicate dựa trên link
-        new_articles = []
-        for article in page_articles:
-            if article.link not in seen_links:
-                seen_links.add(article.link)
-                new_articles.append(article)
-        
-        # Thêm vào danh sách tổng
-        all_articles.extend(new_articles)
-        
-        print(f"   ✅ Page {page_num}: +{len(new_articles)} new articles (total: {len(all_articles)})")
-        
-        # Progress bar cho keyword này
-        progress = min(len(all_articles) / target_articles * 100, 100)
-        print(f"   📊 Progress: {progress:.1f}% ({len(all_articles)}/{target_articles})")
-    
-    print(f"🎯 Total articles for '{keyword}': {len(all_articles)}")
-    return all_articles
+    print(f"🎯 Found {len(articles)} articles for '{keyword}'")
+    return articles
 
 def print_multi_keywords_stats(stats: CrawlStats, csv_filename: str, keywords: List[str], target_per_keyword: int, total_articles: int):
     """In thống kê cho multi-keywords crawl"""
@@ -1077,57 +951,304 @@ def read_keywords_from_csv(csv_file_path: str, keyword_column: str = None, skip_
         print(f"❌ Error reading CSV file: {str(e)}")
         return []
 
+def is_within_working_hours() -> bool:
+    """
+    Kiểm tra xem hiện tại có trong giờ làm việc không (10h - 18h)
+    
+    Returns:
+        True nếu trong giờ làm việc, False nếu không
+    """
+    now = datetime.now()
+    current_time = now.time()
+    
+    # Giờ làm việc: 10:00 - 18:00
+    start_time = dt_time(10, 0)  # 10:00 AM
+    end_time = dt_time(18, 0)    # 6:00 PM
+    
+    return start_time <= current_time <= end_time
 
-def main():
-    """Hàm chính để crawl keywords từ file Keywords.csv"""
+def batch_crawl_keywords(keywords: List[str], articles_per_keyword: int = 10, batch_id: str = None) -> str:
+    """
+    Crawl keywords theo batch với số lượng bài ít để test tần suất cao
     
-    print("🔥 GOOGLE NEWS KEYWORD CRAWLER")
-    print("=" * 50)
+    Args:
+        keywords: Danh sách keywords
+        articles_per_keyword: Số bài mỗi keyword (mặc định 10)
+        batch_id: ID của batch (nếu None sẽ tự tạo từ timestamp)
     
-    # =================================================================
-    # 📝 ĐỌC KEYWORDS TỪ FILE CSV:
-    # =================================================================
-    csv_file_path = "keyword_csvs/Keywords.csv"  # Đường dẫn file CSV
+    Returns:
+        Tên file CSV đã tạo
+    """
     
-    print(f"📖 Reading keywords from: {csv_file_path}")
+    # Tạo batch ID và tên file
+    if batch_id is None:
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        batch_id = f"batch_{timestamp}"
     
-    # Đọc keywords từ CSV
+    csv_filename = f"../batches/{batch_id}.csv"
+    
+    # Tạo thư mục batches nếu chưa có
+    os.makedirs("../batches", exist_ok=True)
+    
+    # Khởi tạo stats
+    stats = CrawlStats()
+    stats.total_keywords = len(keywords)
+    
+    batch_start_time = datetime.now()
+    
+    print(f"🔥 BATCH CRAWL - HIGH FREQUENCY TEST")
+    print("=" * 60)
+    print(f"🆔 Batch ID: {batch_id}")
+    print(f"⏰ Start Time: {batch_start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"📝 Keywords: {len(keywords)}")
+    print(f"📊 Articles per keyword: {articles_per_keyword}")
+    print(f"🎯 Expected total articles: {len(keywords) * articles_per_keyword}")
+    print(f"📁 Output file: {csv_filename}")
+    print("=" * 60)
+    
+    all_articles = []
+    
+    # Tạo và mở file CSV
+    with open(csv_filename, 'w', newline='', encoding='utf-8-sig') as csvfile:
+        fieldnames = [
+            'batch_id', 'keyword', 'article_number', 'headline', 'link', 
+            'date', 'source', 'domain', 'crawl_timestamp', 'keyword_index'
+        ]
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        
+        # Crawl từng keyword
+        for keyword_index, keyword in enumerate(keywords, 1):
+            print(f"\n🔍 [{keyword_index}/{len(keywords)}] Processing: {keyword}")
+            
+            # Delay ngắn giữa các keyword (1-3 giây)
+            if keyword_index > 1:
+                delay = random.uniform(1, 3)
+                print(f"⏳ Short delay: {delay:.1f}s...")
+                time.sleep(delay)
+            
+            # Crawl keyword với số lượng bài ít
+            keyword_articles = simple_crawl_rss(keyword, articles_per_keyword, stats)
+            
+            # Ghi từng bài báo vào CSV
+            for i, article in enumerate(keyword_articles, 1):
+                row = {
+                    'batch_id': batch_id,
+                    'keyword': keyword,
+                    'article_number': i,
+                    'headline': article.headline,
+                    'link': article.link,
+                    'date': article.date,
+                    'source': article.source,
+                    'domain': extract_domain(article.link),
+                    'crawl_timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    'keyword_index': keyword_index
+                }
+                writer.writerow(row)
+            
+            all_articles.extend(keyword_articles)
+            
+            print(f"✅ Found {len(keyword_articles)} articles for '{keyword}'")
+            
+            # Progress update
+            progress = (keyword_index / len(keywords)) * 100
+            print(f"📊 Progress: {progress:.1f}% | Total articles: {len(all_articles)}")
+    
+    batch_end_time = datetime.now()
+    batch_duration = batch_end_time - batch_start_time
+    
+    stats.total_articles = len(all_articles)
+    
+    # In thống kê batch
+    print_batch_stats(stats, csv_filename, batch_id, batch_start_time, batch_end_time, batch_duration)
+    
+    return csv_filename
+
+def print_batch_stats(stats: CrawlStats, csv_filename: str, batch_id: str, start_time: datetime, end_time: datetime, duration):
+    """In thống kê cho batch crawl"""
+    print("\n" + "=" * 60)
+    print("🎯 BATCH CRAWL RESULTS")
+    print("=" * 60)
+    print(f"🆔 Batch ID: {batch_id}")
+    print(f"⏰ Start Time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"🏁 End Time: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"⏱️ Duration: {str(duration).split('.')[0]}")
+    print(f"📋 Keywords Processed: {stats.total_keywords}")
+    print(f"📰 Total Articles: {stats.total_articles}")
+    print(f"✅ Successful Requests: {stats.successful_requests}")
+    print(f"❌ Failed Requests: {stats.failed_requests}")
+    print(f"⚠️ Total Errors: {stats.errors}")
+    print(f"🚫 Captcha Skipped: {stats.captcha_skipped}")
+    print(f"📁 Output File: {csv_filename}")
+    
+    if stats.total_keywords > 0:
+        success_rate = (stats.successful_requests / stats.total_keywords) * 100
+        avg_articles = stats.total_articles / stats.total_keywords
+        print(f"📈 Success Rate: {success_rate:.1f}%")
+        print(f"📊 Avg Articles/Keyword: {avg_articles:.1f}")
+        
+        # Tính tốc độ crawl
+        total_minutes = duration.total_seconds() / 60
+        keywords_per_minute = stats.total_keywords / total_minutes if total_minutes > 0 else 0
+        articles_per_minute = stats.total_articles / total_minutes if total_minutes > 0 else 0
+        
+        print(f"⚡ Crawl Speed: {keywords_per_minute:.1f} keywords/min, {articles_per_minute:.1f} articles/min")
+    
+    print("=" * 60)
+    print("🎉 Batch completed successfully!")
+
+def scheduled_crawler():
+    """
+    Hàm chính để chạy theo schedule - được gọi bởi task scheduler
+    Chạy mỗi tiếng 1 lần từ lúc kích hoạt đến khi dừng
+    """
+    
+    print(f"🚀 SCHEDULED CRAWLER STARTED")
+    print(f"⏰ Current time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print()
+    
+    # Đọc keywords từ file CSV
+    csv_file_path = "keyword_csvs/Keywords.csv"
     keywords = read_keywords_from_csv(csv_file_path, keyword_column="Keywords")
     
     if not keywords:
-        print("❌ No keywords loaded from CSV. Please check your file.")
+        print("❌ No keywords loaded from CSV. Exiting...")
         return
     
-    # =================================================================
-    # ⚙️ CẤU HÌNH CRAWL:
-    # =================================================================
-    target_articles_per_keyword = 200   # Số bài mỗi keyword
-    
-    print("\n⚙️ CRAWL CONFIGURATION:")
-    print(f"   📝 Number of keywords: {len(keywords)}")
-    print(f"   📊 Target articles per keyword: {target_articles_per_keyword}")
-    print(f"   🎯 Total target articles: {len(keywords) * target_articles_per_keyword}")
-    print()
-    
-    # Hiển thị một số keywords đầu tiên
-    print("📋 FIRST 10 KEYWORDS TO CRAWL:")
-    for i, keyword in enumerate(keywords[:10], 1):
-        print(f"   {i}. {keyword}")
-    
-    if len(keywords) > 10:
-        print(f"   ... and {len(keywords) - 10} more keywords")
-    print()
-    
-    # Bắt đầu crawl
-    print("🚀 Starting crawl...")
-    csv_file = crawl_multiple_keywords_deep(
+    # Chạy batch crawl với 10 bài mỗi keyword
+    batch_file = batch_crawl_keywords(
         keywords=keywords,
-        target_articles_per_keyword=target_articles_per_keyword
+        articles_per_keyword=10
     )
     
-    print(f"\n📁 Data exported to: {csv_file}")
-    print(f"🔍 You now have data for {len(keywords)} keywords!")
-    print("💡 Open the CSV file in Excel to view your data!")
+    print(f"\n📁 Batch file created: {batch_file}")
+    print("✅ Scheduled crawl completed!")
+
+def create_batch_schedule_script():
+    """
+    Tạo file .bat để chạy với Windows Task Scheduler
+    """
+    
+    # Lấy đường dẫn hiện tại
+    current_dir = os.getcwd()
+    python_script = os.path.join(current_dir, "pypassCapcha.py")
+    
+    bat_content = f'''@echo off
+cd /d "{current_dir}"
+python "{python_script}" --scheduled
+pause
+'''
+    
+    bat_filename = "run_scheduled_crawler.bat"
+    
+    with open(bat_filename, 'w', encoding='utf-8') as f:
+        f.write(bat_content)
+    
+    print(f"📁 Created batch file: {bat_filename}")
+    print("\n🔧 TASK SCHEDULER SETUP INSTRUCTIONS:")
+    print("=" * 50)
+    print("1. Open Windows Task Scheduler")
+    print("2. Create Basic Task...")
+    print("3. Name: 'Google News Crawler'")
+    print("4. Trigger: Daily")
+    print("5. Start time: [Choose your preferred start time]")
+    print("6. Repeat task every: 1 hour")
+    print("7. For a duration of: Indefinitely (or choose your duration)")
+    print(f"8. Action: Start a program")
+    print(f"9. Program/script: {os.path.abspath(bat_filename)}")
+    print("10. Click Finish")
+    print("=" * 50)
+    print("\n💡 The crawler will run every 1 hour from when you activate it")
+    print("💡 Each batch will crawl ~600 articles (60 keywords x 10 articles)")
+    print("💡 To stop: Disable or delete the task in Task Scheduler")
+
+def run_manual_test():
+    """
+    Chạy test thủ công để kiểm tra
+    """
+    print("🧪 MANUAL TEST MODE")
+    print("=" * 40)
+    
+    # Đọc keywords
+    csv_file_path = "keyword_csvs/Keywords.csv"
+    keywords = read_keywords_from_csv(csv_file_path, keyword_column="Keywords")
+    
+    if not keywords:
+        print("❌ No keywords loaded. Exiting...")
+        return
+    
+    # Lấy 5 keywords đầu tiên để test nhanh
+    test_keywords = keywords[:5]
+    print(f"🧪 Testing with {len(test_keywords)} keywords:")
+    for i, kw in enumerate(test_keywords, 1):
+        print(f"   {i}. {kw}")
+    print()
+    
+    # Chạy batch test
+    batch_file = batch_crawl_keywords(
+        keywords=test_keywords,
+        articles_per_keyword=10,
+        batch_id=f"test_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    )
+    
+    print(f"\n📁 Test batch file: {batch_file}")
+    print("✅ Manual test completed!")
+
+def main():
+    """Hàm chính được cập nhật để hỗ trợ các mode khác nhau"""
+    
+    import sys
+    
+    # Kiểm tra command line arguments
+    if len(sys.argv) > 1:
+        if sys.argv[1] == '--scheduled':
+            # Mode chạy theo schedule
+            scheduled_crawler()
+            return
+        elif sys.argv[1] == '--test':
+            # Mode test thủ công
+            run_manual_test()
+            return
+        elif sys.argv[1] == '--setup':
+            # Mode setup task scheduler
+            create_batch_schedule_script()
+            return
+    
+    # Mode mặc định - hỏi user
+    print("🔥 GOOGLE NEWS BATCH CRAWLER")
+    print("=" * 50)
+    print("Select mode:")
+    print("1. Manual test (5 keywords x 10 articles)")
+    print("2. Create scheduler setup")
+    print("3. Run scheduled crawl (if within working hours)")
+    print("4. Full crawl (original mode)")
+    
+    choice = input("\nEnter your choice (1-4): ").strip()
+    
+    if choice == '1':
+        run_manual_test()
+    elif choice == '2':
+        create_batch_schedule_script()
+    elif choice == '3':
+        scheduled_crawler()
+    elif choice == '4':
+        # Mode crawl đầy đủ như cũ
+        csv_file_path = "keyword_csvs/Keywords.csv"
+        keywords = read_keywords_from_csv(csv_file_path, keyword_column="Keywords")
+        
+        if not keywords:
+            print("❌ No keywords loaded from CSV. Please check your file.")
+            return
+        
+        target_articles_per_keyword = 200
+        csv_file = crawl_multiple_keywords_deep(
+            keywords=keywords,
+            target_articles_per_keyword=target_articles_per_keyword
+        )
+        
+        print(f"\n📁 Data exported to: {csv_file}")
+    else:
+        print("❌ Invalid choice. Exiting...")
 
 if __name__ == "__main__":
     main()
